@@ -1,5 +1,12 @@
 import type { NextConfig } from "next"
 
-const nextConfig: NextConfig = {}
+const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:5000"
+
+const nextConfig: NextConfig = {
+  // Same-origin API: the refresh-token cookie stays first-party and no CORS is needed
+  async rewrites() {
+    return [{ source: "/api/v1/:path*", destination: `${BACKEND_URL}/api/v1/:path*` }]
+  },
+}
 
 export default nextConfig

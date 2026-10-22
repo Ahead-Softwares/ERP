@@ -1,43 +1,21 @@
-# ERP Backend API
+# AHEAD ERP — Backend API
 
-A clean, function-based Express server built with TypeScript and live development with Nodemon.
+See the [root README](../README.md) for setup, structure and how tenant isolation works, and [TASKS.md](../TASKS.md) for the build plan.
 
-## Folder Structure
+## Scripts
 
-```text
-backend/
-├── src/
-│   ├── middlewares/
-│   │   └── error.middleware.ts     # 404 and global error handlers
-│   ├── routes/
-│   │   └── index.ts                # Main API routes & health check
-│   ├── app.ts                      # Express app configuration & middlewares
-│   └── server.ts                   # Server entry point
-├── .env                            # Local environment variables
-├── .env.example                    # Sample environment variables
-├── .gitignore                      # Git ignored files
-├── nodemon.json                    # Nodemon watch configuration
-├── package.json                    # Project metadata & scripts
-├── tsconfig.json                   # TypeScript configuration
-└── README.md
-```
+| Script | What it does |
+| --- | --- |
+| `npm run dev` | API + in-process worker with reload (tsx + nodemon) |
+| `npm run build` / `npm start` | Compile to `dist/` and run |
+| `npm run typecheck` | TypeScript check |
+| `npm run db:migrate` | Apply Prisma migrations (schema, RLS, grants) |
+| `npm run db:seed` | Sync modules, plans, prices, permissions, roles, templates from `src/contracts` |
+| `npm test` | Vitest suite |
 
-## Getting Started
+## Adding a business module
 
-### 1. Install Dependencies
-```bash
-npm install
-```
-
-### 2. Live Development (with Nodemon)
-```bash
-npm run dev
-```
-
-Nodemon will automatically reload whenever files in `src/` change.
-
-### 3. Build for Production
-```bash
-npm run build
-npm start
-```
+1. Add tables to `prisma/schema.prisma` with `tenant_id`, then a migration that enables + forces RLS, adds the `tenant_isolation` policy and grants to `app_user` (the RLS test fails otherwise).
+2. Add permission keys to `src/contracts/permissions.ts` and grant them in `src/contracts/roles.ts`; run `npm run db:seed`.
+3. Routes: `router.post('/things', requirePermission('module.thing.create'), validate(Schema), tx(handler))`. Inside handlers use `db()` only.
+4. Validate `custom` JSONB with `validateCustom(tenantId, entity, input)` from `modules/config/service.ts`.

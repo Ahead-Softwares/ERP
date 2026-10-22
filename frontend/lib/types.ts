@@ -1,0 +1,82 @@
+export type ModuleKey =
+  | "crm"
+  | "catalog"
+  | "sales"
+  | "billing"
+  | "inventory"
+  | "hr"
+  | "tasks"
+  | "finance"
+  | "bookings"
+  | "support"
+  | "reports"
+  | "ai"
+  | "automation"
+
+export type TenantStatus = "trialing" | "active" | "past_due" | "free" | "closed" | "purged"
+export type Scope = "own" | "team" | "branch" | "all"
+
+export interface ModuleEntitlement {
+  status: "active" | "read_only" | "inactive"
+  tier: "basic" | "full"
+}
+
+export interface PlanLimits {
+  users: number
+  branches: number
+  contacts: number | null
+  items: number | null
+  invoicesPerMonth: number | null
+  storageMb: number
+  aiCredits: number
+}
+
+export interface Me {
+  user: { id: string; name: string; email: string; mobile: string; emailVerified: boolean; mobileVerified: boolean }
+  memberships: { tenantId: string; name: string; status: TenantStatus; logoUrl: string | null; roleName: string }[]
+  tenant: null | {
+    id: string
+    name: string
+    legalName: string | null
+    industryKey: string
+    status: TenantStatus
+    logoUrl: string | null
+    gstin: string | null
+    billingStateCode: string | null
+    timezone: string
+    billingOwner: "self" | "partner"
+    configApplied: boolean
+    needsSeatChoice: boolean
+    isOwner: boolean
+    onboarding: { dashboard?: string[]; recommendedModules?: ModuleKey[] }
+  }
+  role?: { id: string; key: string; name: string; roleType: string }
+  subscription?: { status: TenantStatus; planKey: string; trialEndsAt: string | null; daysLeft: number | null; currentPeriodEnd: string | null }
+  limits?: PlanLimits
+  modules?: Record<ModuleKey, ModuleEntitlement>
+  permissions?: Record<string, Scope>
+  fieldAccess?: Record<string, "hidden" | "read" | "write">
+  terms?: Record<string, string>
+}
+
+export interface Role {
+  id: string
+  key: string
+  name: string
+  description: string | null
+  roleType: string
+  requiredModules: string[]
+  isSystem: boolean
+  isPredefined: boolean
+  memberCount: number
+}
+
+export interface Branch {
+  id: string
+  name: string
+  code: string
+  stateCode: string | null
+  gstin: string | null
+  isDefault: boolean
+  address: Record<string, string> | null
+}
