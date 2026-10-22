@@ -46,6 +46,18 @@ router.post('/invitations/:token/accept', publicRoute, publicLimiter, validate(t
 // Everything below needs a signed-in member of the tenant
 router.use(tenantAuth);
 
+// ── Directory: names of active users for assignee/owner pickers (any member) ──
+router.get('/directory/users', tx(async (_req, res) => {
+  const members = await db().tenantMember.findMany({ where: { status: 'active' }, include: { user: { select: { id: true, name: true } }, role: { select: { key: true, name: true } } } });
+  res.json({ data: members.map((m) => ({ id: m.user.id, name: m.user.name, roleKey: m.role.key, roleName: m.role.name })).sort((a, b) => a.name.localeCompare(b.name)) });
+}));
+
+// Active custom field definitions for data-entry forms (definitions are not sensitive; values are)
+router.get('/forms/fields', validate(z.object({ entity: z.string().max(40) }), 'query'), tx(async (req, res) => {
+  const rows = await listFields((req.query as { entity: string }).entity);
+  res.json({ data: rows.filter((f) => !f.archivedAt) });
+}));
+
 // ── Tenant profile ──
 router.get('/tenant', requirePermission('tenant.settings.view'), tx(async (req, res) => {
   res.json(await tenancy.getTenant(req.ctx!.tenantId));

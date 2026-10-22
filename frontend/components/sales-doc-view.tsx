@@ -1,0 +1,156 @@
+import { GST_STATES, formatDate, formatPaise } from "@/lib/format"
+import { amountInWords } from "@/lib/money"
+import type { Buyer, DocLine, Seller } from "@/lib/sales"
+import { cn } from "@/lib/utils"
+
+// Printable GST tax invoice / quotation (BIL-01, HW-02). Used in-app, for printing and on share links.
+
+export interface ViewDoc {
+  kind: "invoice" | "quotation"
+  number: string | null
+  status: string
+  issueDate: string
+  dueDate: string | null
+  buyer: Buyer
+  seller: Seller | null
+  placeOfSupply: string | null
+  subtotalPaise: number
+  discountPaise: number
+  taxablePaise: number
+  cgstPaise: number
+  sgstPaise: number
+  igstPaise: number
+  totalPaise: number
+  paidPaise: number
+  notes: string | null
+  terms: string | null
+  lines: DocLine[]
+}
+
+const stateName = (code?: string | null) => (code ? `${GST_STATES.find(([c]) => c === code)?.[1] ?? ""} (${code})` : "—")
+const addr = (a?: Record<string, string> | null) => (a ? [a.line1, a.line2, a.city, a.state, a.pincode].filter(Boolean).join(", ") : "")
+
+export function SalesDocView({ doc, fallbackSeller, className }: { doc: ViewDoc; fallbackSeller?: Seller; className?: string }) {
+  const seller = doc.seller ?? fallbackSeller
+  const intra = doc.igstPaise === 0
+  const title = doc.kind === "quotation" ? "Quotation" : doc.status === "draft" ? "Draft invoice" : doc.buyer.gstin ? "Tax Invoice" : "Tax Invoice (B2C)"
+  const balance = doc.totalPaise - doc.paidPaise
+  const hsnSummary = Object.values(
+    doc.lines.reduce<Record<string, { hsn: string; rate: number; taxable: number; tax: number }>>((acc, l) => {
+      const key = `${l.hsnSac ?? "—"}-${l.gstRateBp}`
+      acc[key] ??= { hsn: l.hsnSac ?? "—", rate: l.gstRateBp, taxable: 0, tax: 0 }
+      acc[key].taxable += l.taxablePaise ?? 0
+      acc[key].tax += (l.cgstPaise ?? 0) + (l.sgstPaise ?? 0) + (l.igstPaise ?? 0)
+      return acc
+    }, {})
+  )
+
+  return (
+    <article className={cn("bg-white p-6 text-sm text-neutral-900 sm:p-10", className)}>
+      <header className="flex flex-wrap items-start justify-between gap-6 border-b border-neutral-200 pb-6">
+        <div className="flex items-start gap-3">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          {seller?.logoUrl && <img src={seller.logoUrl} alt="" className="size-14 rounded-lg object-contain" />}
+          <div>
+            <p className="text-lg font-semibold">{seller?.legalName || seller?.name}</p>
+            {seller?.address && <p className="max-w-xs text-neutral-600">{addr(seller.address)}</p>}
+            {seller?.gstin && <p className="text-neutral-600">GSTIN: <span className="font-mono">{seller.gstin}</span></p>}
+            {seller?.stateCode && <p className="text-neutral-600">State: {stateName(seller.stateCode)}</p>}
+          </div>
+        </div>
+        <div className="text-right">
+          <p className="text-xl font-semibold tracking-tight uppercase">{title}</p>
+          <p className="mt-1 font-mono">{doc.number ?? "—"}</p>
+          <p className="text-neutral-600">Date: {formatDate(doc.issueDate)}</p>
+          {doc.dueDate && <p className="text-neutral-600">{doc.kind === "invoice" ? "Due" : "Valid until"}: {formatDate(doc.dueDate)}</p>}
+          {doc.status === "cancelled" && <p className="mt-1 font-semibold text-red-600">CANCELLED</p>}
+        </div>
+      </header>
+
+      <section className="grid gap-4 border-b border-neutral-200 py-5 sm:grid-cols-2">
+        <div>
+          <p className="text-xs font-medium tracking-wide text-neutral-500 uppercase">Bill to</p>
+          <p className="mt-1 font-medium">{doc.buyer.name}</p>
+          {doc.buyer.address && <p className="text-neutral-600">{addr(doc.buyer.address)}</p>}
+          {doc.buyer.gstin && <p className="text-neutral-600">GSTIN: <span className="font-mono">{doc.buyer.gstin}</span></p>}
+          {doc.buyer.phone && <p className="text-neutral-600">{doc.buyer.phone}</p>}
+        </div>
+        <div className="sm:text-right">
+          <p className="text-xs font-medium tracking-wide text-neutral-500 uppercase">Place of supply</p>
+          <p className="mt-1">{stateName(doc.placeOfSupply)}</p>
+        </div>
+      </section>
+
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[560px] border-collapse py-4 text-left">
+          <thead>
+            <tr className="border-b border-neutral-300 text-xs text-neutral-500">
+              <th className="py-2 pr-2 font-medium">#</th>
+              <th className="py-2 pr-2 font-medium">Item</th>
+              <th className="py-2 pr-2 font-medium">HSN/SAC</th>
+              <th className="py-2 pr-2 text-right font-medium">Qty</th>
+              <th className="py-2 pr-2 text-right font-medium">Rate</th>
+              <th className="py-2 pr-2 text-right font-medium">Disc.</th>
+              <th className="py-2 pr-2 text-right font-medium">Taxable</th>
+              <th className="py-2 pr-2 text-right font-medium">GST</th>
+              <th className="py-2 text-right font-medium">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {doc.lines.map((l, i) => (
+              <tr key={l.id ?? i} className="border-b border-neutral-100 align-top">
+                <td className="py-2 pr-2 text-neutral-500">{i + 1}</td>
+                <td className="py-2 pr-2">{l.description}</td>
+                <td className="py-2 pr-2 font-mono text-xs">{l.hsnSac ?? "—"}</td>
+                <td className="py-2 pr-2 text-right tabular-nums">{Number(l.quantity)} {l.unit}</td>
+                <td className="py-2 pr-2 text-right tabular-nums">{formatPaise(l.unitPricePaise)}</td>
+                <td className="py-2 pr-2 text-right tabular-nums">{l.discountPaise ? formatPaise(l.discountPaise) : "—"}</td>
+                <td className="py-2 pr-2 text-right tabular-nums">{formatPaise(l.taxablePaise ?? 0)}</td>
+                <td className="py-2 pr-2 text-right tabular-nums">{l.gstRateBp / 100}%</td>
+                <td className="py-2 text-right font-medium tabular-nums">{formatPaise(l.totalPaise ?? 0)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <section className="grid gap-6 pt-5 sm:grid-cols-2">
+        <div className="grid content-start gap-3">
+          {doc.kind === "invoice" && hsnSummary.length > 0 && (
+            <table className="w-full text-xs">
+              <thead><tr className="text-neutral-500"><th className="text-left font-medium">HSN/SAC</th><th className="text-right font-medium">Rate</th><th className="text-right font-medium">Taxable</th><th className="text-right font-medium">Tax</th></tr></thead>
+              <tbody>{hsnSummary.map((h) => <tr key={`${h.hsn}-${h.rate}`}><td className="font-mono">{h.hsn}</td><td className="text-right">{h.rate / 100}%</td><td className="text-right tabular-nums">{formatPaise(h.taxable)}</td><td className="text-right tabular-nums">{formatPaise(h.tax)}</td></tr>)}</tbody>
+            </table>
+          )}
+          <p className="text-xs text-neutral-600"><span className="font-medium text-neutral-900">Amount in words:</span> {amountInWords(doc.totalPaise)}</p>
+        </div>
+        <dl className="ml-auto grid w-full max-w-xs gap-1">
+          <div className="flex justify-between"><dt className="text-neutral-500">Taxable value</dt><dd className="tabular-nums">{formatPaise(doc.taxablePaise)}</dd></div>
+          {intra ? (
+            <>
+              <div className="flex justify-between"><dt className="text-neutral-500">CGST</dt><dd className="tabular-nums">{formatPaise(doc.cgstPaise)}</dd></div>
+              <div className="flex justify-between"><dt className="text-neutral-500">SGST</dt><dd className="tabular-nums">{formatPaise(doc.sgstPaise)}</dd></div>
+            </>
+          ) : (
+            <div className="flex justify-between"><dt className="text-neutral-500">IGST</dt><dd className="tabular-nums">{formatPaise(doc.igstPaise)}</dd></div>
+          )}
+          <div className="flex justify-between border-t border-neutral-300 pt-2 text-base font-semibold"><dt>Total</dt><dd className="tabular-nums">{formatPaise(doc.totalPaise)}</dd></div>
+          {doc.kind === "invoice" && doc.paidPaise > 0 && (
+            <>
+              <div className="flex justify-between text-neutral-500"><dt>Paid</dt><dd className="tabular-nums">{formatPaise(doc.paidPaise)}</dd></div>
+              <div className="flex justify-between font-medium"><dt>Balance due</dt><dd className="tabular-nums">{formatPaise(balance)}</dd></div>
+            </>
+          )}
+        </dl>
+      </section>
+
+      {(doc.notes || doc.terms) && (
+        <footer className="mt-6 grid gap-4 border-t border-neutral-200 pt-5 text-xs text-neutral-600 sm:grid-cols-2">
+          {doc.notes && <div><p className="font-medium text-neutral-900">Notes</p><p className="whitespace-pre-wrap">{doc.notes}</p></div>}
+          {doc.terms && <div><p className="font-medium text-neutral-900">Terms</p><p className="whitespace-pre-wrap">{doc.terms}</p></div>}
+        </footer>
+      )}
+      <p className="mt-8 text-center text-[11px] text-neutral-400">This is a computer-generated document.</p>
+    </article>
+  )
+}

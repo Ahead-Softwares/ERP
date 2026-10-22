@@ -2,6 +2,13 @@ import { Router } from 'express';
 import { prisma } from '../kernel/db';
 import identityRoutes, { meHandler } from '../modules/identity/routes';
 import tenancyRoutes from '../modules/tenancy/routes';
+import catalogRoutes from '../modules/catalog/routes';
+import crmRoutes from '../modules/crm/routes';
+import billingRoutes, { publicBilling } from '../modules/billing/routes';
+import financeRoutes from '../modules/finance/routes';
+import taskRoutes from '../modules/tasks/routes';
+import bookingRoutes from '../modules/bookings/routes';
+import reportRoutes from '../modules/reports/routes';
 
 const router = Router();
 
@@ -18,6 +25,14 @@ router.get('/health', async (_req, res) => {
 
 router.use('/auth', identityRoutes);
 router.use('/me', meHandler);
+router.use('/', publicBilling); // public share links, before any authenticated router
 router.use('/', tenancyRoutes);
+router.use('/', catalogRoutes);
+router.use('/', crmRoutes);
+router.use('/', billingRoutes);
+router.use('/', financeRoutes);
+router.use('/', taskRoutes);
+router.use('/', bookingRoutes);
+router.use('/', reportRoutes);
 
 export default router;

@@ -13,13 +13,14 @@ import { useAuth } from "@/lib/auth"
 import { useApi } from "@/lib/use-api"
 import { MODULE_NAV } from "@/lib/nav"
 import { formatDate } from "@/lib/format"
+import { DashboardWidgets } from "./dashboard-widgets"
 
 const STEP_LINKS: Record<string, string> = {
   profile: "/app/settings",
   logo: "/app/settings",
   first_customer: "/app/m/crm",
   first_item: "/app/m/catalog",
-  first_invoice: "/app/m/billing",
+  first_invoice: "/app/m/billing/new",
   invite_team: "/app/settings/team",
 }
 
@@ -75,6 +76,12 @@ function Dashboard() {
         title={welcome ? `Welcome to AHEAD, ${me?.user.name.split(" ")[0]}!` : `${greeting}, ${me?.user.name.split(" ")[0]}`}
         description={welcome ? "Your workspace is ready. Here's how to get going." : me?.tenant?.name}
       />
+
+      {can("reports.dashboard.view") && (
+        <div className="mb-6">
+          <DashboardWidgets />
+        </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="grid gap-6 lg:col-span-2">

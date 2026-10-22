@@ -693,3 +693,387 @@ model Notification {
   @@index([tenantId, userId, createdAt(sort: Desc)])
   @@map("notifications")
 }
+
+// ═════════════════════════ Business modules — Phase 1 (free core) ═════════════════════════
+// Every table below carries tenant_id and is protected by RLS (migration *_phase1_modules).
+
+enum ItemType {
+  product
+  service
+
+  @@map("item_type")
+}
+
+enum ContactType {
+  lead
+  customer
+
+  @@map("contact_type")
+}
+
+enum LeadStatus {
+  new
+  contacted
+  qualified
+  lost
+  converted
+
+  @@map("lead_status")
+}
+
+enum ActivityType {
+  note
+  call
+  meeting
+  follow_up
+
+  @@map("activity_type")
+}
+
+enum SalesDocKind {
+  quotation
+  invoice
+
+  @@map("sales_doc_kind")
+}
+
+enum SalesDocStatus {
+  draft
+  sent
+  accepted
+  declined
+  converted
+  issued
+  partially_paid
+  paid
+  cancelled
+
+  @@map("sales_doc_status")
+}
+
+enum PaymentMethod {
+  cash
+  upi
+  card
+  bank
+  cheque
+  other
+
+  @@map("payment_method")
+}
+
+enum TaskStatus {
+  todo
+  in_progress
+  done
+  cancelled
+
+  @@map("task_status")
+}
+
+enum TaskPriority {
+  low
+  medium
+  high
+  urgent
+
+  @@map("task_priority")
+}
+
+enum AppointmentKind {
+  appointment
+  event
+
+  @@map("appointment_kind")
+}
+
+enum AppointmentStatus {
+  scheduled
+  confirmed
+  completed
+  cancelled
+  no_show
+
+  @@map("appointment_status")
+}
+
+// ── Product & Service Catalogue (CAT-01, CAT-02) ──
+
+model ItemCategory {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  name      String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([tenantId, name])
+  @@map("item_categories")
+}
+
+model Item {
+  id             String       @id @default(uuid(7)) @db.Uuid
+  tenantId       String       @map("tenant_id") @db.Uuid
+  type           ItemType     @default(product)
+  name           String
+  sku            String?
+  categoryId     String?      @map("category_id") @db.Uuid
+  unit           String       @default("pcs")
+  pricePaise     BigInt       @default(0) @map("price_paise")
+  costPricePaise BigInt?      @map("cost_price_paise")
+  gstRateBp      Int          @default(1800) @map("gst_rate_bp") // 1800 = 18%
+  hsnSac         String?      @map("hsn_sac") @db.VarChar(10)
+  durationMin    Int?         @map("duration_min")
+  skill          String?
+  description    String?
+  imageUrl       String?      @map("image_url")
+  isActive       Boolean      @default(true) @map("is_active")
+  custom         Json         @default("{}")
+  source         RecordSource @default(tenant)
+  createdBy      String?      @map("created_by") @db.Uuid
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz
+  version        Int          @default(1)
+
+  @@index([tenantId, name])
+  @@map("items")
+}
+
+// ── CRM (CRM-01..04) ──
+
+model Contact {
+  id          String      @id @default(uuid(7)) @db.Uuid
+  tenantId    String      @map("tenant_id") @db.Uuid
+  branchId    String?     @map("branch_id") @db.Uuid
+  type        ContactType @default(customer)
+  name        String
+  companyName String?     @map("company_name")
+  phone       String?     @db.VarChar(15)
+  email       String?
+  gstin       String?     @db.VarChar(15)
+  stateCode   String?     @map("state_code") @db.Char(2)
+  address     Json?
+  leadStatus  LeadStatus? @map("lead_status")
+  leadSource  String?     @map("lead_source")
+  ownerId     String?     @map("owner_id") @db.Uuid
+  isActive    Boolean     @default(true) @map("is_active")
+  notes       String?
+  custom      Json        @default("{}")
+  createdBy   String?     @map("created_by") @db.Uuid
+  convertedAt DateTime?   @map("converted_at") @db.Timestamptz
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime    @updatedAt @map("updated_at") @db.Timestamptz
+  version     Int         @default(1)
+
+  @@index([tenantId, type, name])
+  @@index([tenantId, phone])
+  @@index([tenantId, email])
+  @@map("contacts")
+}
+
+model Activity {
+  id          String       @id @default(uuid(7)) @db.Uuid
+  tenantId    String       @map("tenant_id") @db.Uuid
+  contactId   String       @map("contact_id") @db.Uuid
+  type        ActivityType
+  title       String?
+  body        String?
+  dueAt       DateTime?    @map("due_at") @db.Timestamptz
+  completedAt DateTime?    @map("completed_at") @db.Timestamptz
+  assigneeId  String?      @map("assignee_id") @db.Uuid
+  createdBy   String?      @map("created_by") @db.Uuid
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([tenantId, contactId, createdAt(sort: Desc)])
+  @@index([tenantId, assigneeId, dueAt])
+  @@map("activities")
+}
+
+// ── Quotations & GST invoices (SAL-01, BIL-01..04) ──
+
+model TenantSequence {
+  tenantId String @map("tenant_id") @db.Uuid
+  docType  String @map("doc_type") // invoice | quotation | receipt
+  fy       String // e.g. 26-27
+  prefix   String
+  nextNo   Int    @default(1) @map("next_no")
+
+  @@id([tenantId, docType, fy])
+  @@map("tenant_sequences")
+}
+
+model SalesDocument {
+  id            String         @id @default(uuid(7)) @db.Uuid
+  tenantId      String         @map("tenant_id") @db.Uuid
+  branchId      String?        @map("branch_id") @db.Uuid
+  kind          SalesDocKind
+  status        SalesDocStatus @default(draft)
+  number        String?
+  fy            String?
+  contactId     String?        @map("contact_id") @db.Uuid
+  buyer         Json           @default("{}") // snapshot: name, gstin, phone, email, address, stateCode
+  seller        Json? // snapshot at issue: name, legalName, gstin, address, stateCode
+  placeOfSupply String?        @map("place_of_supply") @db.Char(2)
+  issueDate     DateTime       @map("issue_date") @db.Date
+  dueDate       DateTime?      @map("due_date") @db.Date
+  subtotalPaise BigInt         @default(0) @map("subtotal_paise")
+  discountPaise BigInt         @default(0) @map("discount_paise")
+  taxablePaise  BigInt         @default(0) @map("taxable_paise")
+  cgstPaise     BigInt         @default(0) @map("cgst_paise")
+  sgstPaise     BigInt         @default(0) @map("sgst_paise")
+  igstPaise     BigInt         @default(0) @map("igst_paise")
+  totalPaise    BigInt         @default(0) @map("total_paise")
+  paidPaise     BigInt         @default(0) @map("paid_paise")
+  notes         String?
+  terms         String?
+  sourceType    String?        @map("source_type") // quotation | appointment
+  sourceId      String?        @map("source_id") @db.Uuid
+  shareToken    String?        @unique @map("share_token")
+  custom        Json           @default("{}")
+  createdBy     String?        @map("created_by") @db.Uuid
+  issuedAt      DateTime?      @map("issued_at") @db.Timestamptz
+  cancelledAt   DateTime?      @map("cancelled_at") @db.Timestamptz
+  cancelReason  String?        @map("cancel_reason")
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+  version       Int            @default(1)
+
+  lines    SalesDocumentLine[]
+  payments Payment[]
+
+  @@unique([tenantId, kind, number])
+  @@index([tenantId, kind, status, issueDate])
+  @@index([tenantId, contactId])
+  @@map("sales_documents")
+}
+
+model SalesDocumentLine {
+  id             String  @id @default(uuid(7)) @db.Uuid
+  tenantId       String  @map("tenant_id") @db.Uuid
+  documentId     String  @map("document_id") @db.Uuid
+  itemId         String? @map("item_id") @db.Uuid
+  description    String
+  hsnSac         String? @map("hsn_sac") @db.VarChar(10)
+  unit           String  @default("pcs")
+  quantity       Decimal @db.Decimal(18, 3)
+  unitPricePaise BigInt  @map("unit_price_paise")
+  discountPaise  BigInt  @default(0) @map("discount_paise")
+  taxablePaise   BigInt  @map("taxable_paise")
+  gstRateBp      Int     @map("gst_rate_bp")
+  cgstPaise      BigInt  @default(0) @map("cgst_paise")
+  sgstPaise      BigInt  @default(0) @map("sgst_paise")
+  igstPaise      BigInt  @default(0) @map("igst_paise")
+  totalPaise     BigInt  @map("total_paise")
+  position       Int     @default(0)
+
+  document SalesDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, documentId])
+  @@map("sales_document_lines")
+}
+
+model Payment {
+  id          String        @id @default(uuid(7)) @db.Uuid
+  tenantId    String        @map("tenant_id") @db.Uuid
+  documentId  String        @map("document_id") @db.Uuid
+  contactId   String?       @map("contact_id") @db.Uuid
+  number      String
+  amountPaise BigInt        @map("amount_paise")
+  method      PaymentMethod
+  reference   String?
+  paidOn      DateTime      @map("paid_on") @db.Date
+  notes       String?
+  createdBy   String?       @map("created_by") @db.Uuid
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz
+
+  document SalesDocument @relation(fields: [documentId], references: [id])
+
+  @@index([tenantId, documentId])
+  @@index([tenantId, paidOn])
+  @@map("payments_received")
+}
+
+// ── Expenses (FIN-01) ──
+
+model Expense {
+  id          String        @id @default(uuid(7)) @db.Uuid
+  tenantId    String        @map("tenant_id") @db.Uuid
+  branchId    String?       @map("branch_id") @db.Uuid
+  category    String
+  amountPaise BigInt        @map("amount_paise")
+  paidOn      DateTime      @map("paid_on") @db.Date
+  method      PaymentMethod @default(cash)
+  payee       String?
+  notes       String?
+  receiptUrl  String?       @map("receipt_url")
+  createdBy   String?       @map("created_by") @db.Uuid
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+  version     Int           @default(1)
+
+  @@index([tenantId, paidOn])
+  @@map("expenses")
+}
+
+// ── Tasks (TSK-01, TSK-02) ──
+
+model Task {
+  id          String       @id @default(uuid(7)) @db.Uuid
+  tenantId    String       @map("tenant_id") @db.Uuid
+  parentId    String?      @map("parent_id") @db.Uuid
+  title       String
+  description String?
+  status      TaskStatus   @default(todo)
+  priority    TaskPriority @default(medium)
+  dueAt       DateTime?    @map("due_at") @db.Timestamptz
+  assigneeId  String?      @map("assignee_id") @db.Uuid
+  contactId   String?      @map("contact_id") @db.Uuid
+  createdBy   String?      @map("created_by") @db.Uuid
+  completedAt DateTime?    @map("completed_at") @db.Timestamptz
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz
+  version     Int          @default(1)
+
+  @@index([tenantId, status, dueAt])
+  @@index([tenantId, assigneeId])
+  @@index([tenantId, parentId])
+  @@map("tasks")
+}
+
+model TaskEvent {
+  id       String   @id @default(uuid(7)) @db.Uuid
+  tenantId String   @map("tenant_id") @db.Uuid
+  taskId   String   @map("task_id") @db.Uuid
+  actorId  String?  @map("actor_id") @db.Uuid
+  type     String // created | status | assigned | comment | edited
+  body     String?
+  data     Json?
+  at       DateTime @default(now()) @db.Timestamptz
+
+  @@index([tenantId, taskId, at])
+  @@map("task_events")
+}
+
+// ── Calendar & bookings (BKG-01, BKG-02, BKG-08) ──
+
+model Appointment {
+  id        String            @id @default(uuid(7)) @db.Uuid
+  tenantId  String            @map("tenant_id") @db.Uuid
+  branchId  String?           @map("branch_id") @db.Uuid
+  kind      AppointmentKind   @default(appointment)
+  title     String
+  contactId String?           @map("contact_id") @db.Uuid
+  itemId    String?           @map("item_id") @db.Uuid
+  staffId   String?           @map("staff_id") @db.Uuid
+  startAt   DateTime          @map("start_at") @db.Timestamptz
+  endAt     DateTime          @map("end_at") @db.Timestamptz
+  status    AppointmentStatus @default(scheduled)
+  notes     String?
+  invoiceId String?           @map("invoice_id") @db.Uuid
+  createdBy String?           @map("created_by") @db.Uuid
+  createdAt DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime          @updatedAt @map("updated_at") @db.Timestamptz
+  version   Int               @default(1)
+
+  @@index([tenantId, startAt])
+  @@index([tenantId, staffId, startAt])
+  @@map("appointments")
+}

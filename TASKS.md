@@ -21,7 +21,7 @@ Exit gate: a tenant can sign up, configure, and issue a GST invoice.
 - [x] Zod `validate()` middleware → 422 `VALIDATION_FAILED`
 - [x] Rate limiting on auth/OTP routes (NFR-07)
 - [ ] Idempotency-Key store for money/document POSTs
-- [ ] Cursor pagination helper (`?limit&cursor`, `nextCursor`)
+- [x] Cursor pagination helper (`?limit&cursor`, `nextCursor`)
 - [ ] OpenAPI generation from Zod
 - [ ] Route-coverage test: every route has `requirePermission` or `public()`
 
@@ -59,8 +59,8 @@ Exit gate: a tenant can sign up, configure, and issue a GST invoice.
 - [x] `requirePermission(key)`: entitlement (active / read_only / inactive) → role permission → scope on `req.ctx`
 - [x] Visible roles = core + module roles whose required modules are active (LLD §4.4)
 - [x] `GET /roles`, `GET /permissions` (filtered to active modules)
-- [ ] Scope filter helper (`own/team/branch/all`) used by module repos
-- [ ] Field-level access serializer (salary, cost price, bank details)
+- [x] Scope filter helper (`own/team/branch/all`) used by module repos — `team` behaves as `own` until HR reporting lines exist
+- [x] Field-level access serializer (salary, cost price, bank details) — used for item cost price; salary/bank arrive with HR
 - [ ] Custom roles: clone & edit (paid, P1)
 
 ### 1.6 Tenancy admin
@@ -83,20 +83,20 @@ Exit gate: a tenant can sign up, configure, and issue a GST invoice.
 - [x] Entitlement resolver (trial = all modules; free = free modules; `everUsed` → read_only)
 - [x] `GET /billing/plans`, `GET /billing/subscription`
 - [x] Trial-expiry job (hourly) → Free; paid modules read-only (unit-tested; not yet run against an expired tenant)
-- [ ] Limit enforcement helpers (users, records, invoices/month with atomic usage counter)
+- [x] Limit enforcement helpers (users, records, invoices/month with atomic usage counter)
 - [ ] Trial reminder job (day 0, 2–3, 7/3/1 left, expiry, +3/+7) with notification_log de-dup
 - [ ] "Choose active users" screen when over Free user limit
 
 ### 1.9 Free-core business modules
-- [ ] Product & Service Catalogue (CAT-01, CAT-02): items, categories, units, GST rate, HSN/SAC
-- [ ] CRM basic (CRM-01..04): contacts, leads, convert, timeline notes/calls/follow-ups, CSV import with duplicate detection
-- [ ] Billing basic (BIL-01..04): GST invoice (CGST/SGST vs IGST), FY number series via `document_sequences`, PDF/print, receipts, paid/partial/unpaid, immutable after issue
-- [ ] Quotations (SAL-01) → convert to invoice
-- [ ] Expenses (FIN-01)
-- [ ] Tasks basic (TSK-01, TSK-02)
-- [ ] Calendar & appointments basic (BKG-01, BKG-02, BKG-08) with no double-booking
-- [ ] Home dashboard (RPT-01) with widgets per enabled module
-- [ ] In-app notifications (AUT-01)
+- [x] Product & Service Catalogue (CAT-01, CAT-02): items, categories, units, GST rate, HSN/SAC — plus template starter catalogue, archive-on-delete, cost price hidden by role
+- [x] CRM basic (CRM-01..04): contacts, leads, convert, timeline notes/calls/follow-ups, CSV import with duplicate detection
+- [x] Billing basic (BIL-01..04): GST invoice (CGST/SGST vs IGST), FY number series via `document_sequences`, PDF/print, receipts, paid/partial/unpaid, immutable after issue — numbering via `tenant_sequences`; print/PDF via browser (A4, 80/58 mm); public share link; cancel with reason
+- [x] Quotations (SAL-01) → convert to invoice
+- [x] Expenses (FIN-01)
+- [x] Tasks basic (TSK-01, TSK-02)
+- [x] Calendar & appointments basic (BKG-01, BKG-02, BKG-08) with no double-booking — enforced by a Postgres exclusion constraint
+- [x] Home dashboard (RPT-01) with widgets per enabled module
+- [x] In-app notifications (AUT-01) — assignments, follow-ups, comments, task completion
 
 ### 1.10 Frontend foundation
 - [x] API client with access token in memory + silent refresh
@@ -106,7 +106,7 @@ Exit gate: a tenant can sign up, configure, and issue a GST invoice.
 - [x] Settings: business profile, branches, team & invitations, roles view, terminology, custom fields
 - [x] Plans page (read-only pricing)
 - [x] Placeholder screen per module (locked / coming-soon) until 1.9 lands
-- [ ] Module screens for 1.9
+- [x] Module screens for 1.9
 
 ---
 
@@ -121,8 +121,13 @@ Exit gate: a tenant can sign up, configure, and issue a GST invoice.
 - [x] Frontend treated server outage as "signed out" → reconnect screen with auto-retry, session kept
 - [x] Concurrent refresh (two tabs) revoked all sessions → 30 s reuse grace window
 
+### 1.12 Verified for Phase 1.9 (2026-10-22)
+- 45-check API run (twice in a row): catalogue + template seed, SKU/GST validation, custom fields, duplicate detection, draft → issue with FY number, CGST/SGST and IGST maths, immutability, partial/full payment and receipts, cancel rules, public share link, quotation → invoice, lead → customer, timeline, CSV import, expenses, tasks/subtasks/comments/history, double-booking blocked, appointment → invoice, dashboard figures, staff scope (own invoices only, no cost price, no cancel/delete)
+- 20 Vitest tests incl. GST rounding and financial-year boundaries
+- Browser: catalogue add-item flow, every module screen renders, shared invoice layout checked (pane hidden for the rest of the click-through)
+
 ### Known issues
-- [ ] Latency: every query round-trips to Neon us-east-2; signup takes ~8 s from India. Host the API in the same region as the database (or move the Neon project closer) and batch the /me queries.
+- [ ] Latency: every query round-trips to Neon us-east-2; signup takes ~8 s and the dashboard ~15–20 s from India. Host the API in the same region as the database (or move the Neon project closer) and batch the /me queries.
 - [ ] Rotate the Neon database password (it was shared in chat) and keep it only in backend/.env.
 
 ## Phase 2 — Operations (weeks 5–8)
