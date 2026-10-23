@@ -13,12 +13,14 @@ function FullScreen({ children }: { children: React.ReactNode }) {
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
-  const { status, me, reload, retry } = useAuth()
+  const { status, me, reload, retry, switchToConsole } = useAuth()
   const [retrying, setRetrying] = React.useState(false)
 
+  const inConsole = status === "authenticated" && me?.workspace === "console"
   React.useEffect(() => {
     if (status === "anonymous") router.replace("/login")
-  }, [status, router])
+    if (inConsole) router.replace("/console")
+  }, [status, inConsole, router])
 
   // LLD §11.1: the template is applied asynchronously right after signup
   const settingUp = status === "authenticated" && me?.tenant && !me.tenant.configApplied
@@ -50,7 +52,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       </FullScreen>
     )
   }
-  if (status !== "authenticated" || !me) {
+  if (status !== "authenticated" || !me || inConsole) {
     return (
       <FullScreen>
         <Loader2 className="size-5 animate-spin" aria-label="Loading" />
@@ -63,6 +65,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <div className="max-w-sm">
           <p className="font-medium text-foreground">No active business</p>
           <p className="mt-1">You&apos;re not an active member of any business yet. Ask your administrator for an invitation.</p>
+          {me.console && (
+            <Button className="mt-4" onClick={() => switchToConsole().then(() => router.replace("/console"))}>
+              Open the AHEAD Console
+            </Button>
+          )}
         </div>
       </FullScreen>
     )

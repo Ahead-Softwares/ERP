@@ -31,7 +31,20 @@ export interface PlanLimits {
   aiCredits: number
 }
 
+/** design v2: AHEAD team members work in the Console, clients in the ERP */
+export type Workspace = "tenant" | "console"
+
+export interface ConsoleAccess {
+  memberId: string
+  role: { key: string; name: string }
+  /** platform.* permission keys with their scope (all / team / own) */
+  permissions: Record<string, Scope>
+}
+
 export interface Me {
+  workspace: Workspace
+  /** null unless the user is on the AHEAD team */
+  console: ConsoleAccess | null
   user: { id: string; name: string; email: string; mobile: string; emailVerified: boolean; mobileVerified: boolean }
   memberships: { tenantId: string; name: string; status: TenantStatus; logoUrl: string | null; roleName: string }[]
   tenant: null | {

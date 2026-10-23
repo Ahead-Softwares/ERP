@@ -108,7 +108,7 @@ router.get('/roles/:id', requirePermission('tenant.role.view'), validate(id, 'pa
 router.get('/permissions', requirePermission('tenant.role.view'), async (req, res) => {
   const ent = await getEntitlements(req.ctx!.tenantId);
   // Only modules the tenant has (hidden, not greyed out — Roles doc)
-  const data = PERMISSIONS.filter((p) => p.moduleKey === 'tenant' || ent.modules[p.moduleKey].status !== 'inactive');
+  const data = PERMISSIONS.filter((p) => p.moduleKey === 'tenant' || (p.moduleKey !== 'platform' && ent.modules[p.moduleKey].status !== 'inactive'));
   res.json({ data });
 });
 

@@ -10,7 +10,8 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:generate": "prisma generate",
     "test": "vitest run",
-    "db:migrate:tcp": "prisma migrate deploy"
+    "db:migrate:tcp": "prisma migrate deploy",
+    "console:member": "tsx scripts/console-member.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.2.0",

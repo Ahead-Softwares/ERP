@@ -19,7 +19,7 @@ export function verifyAccessToken(token: string): AuthClaims {
   try {
     const p = jwt.verify(token, env.JWT_SECRET, { algorithms: ['HS256'], audience: 'ahead-api' }) as jwt.JwtPayload & AuthClaims;
     if (p.typ) throw new Error('wrong token type');
-    return { sub: p.sub, tid: p.tid, rid: p.rid, sid: p.sid };
+    return { sub: p.sub, tid: p.tid, rid: p.rid, sid: p.sid, ws: p.ws === 'console' ? 'console' : 'tenant' };
   } catch (e) {
     if (e instanceof jwt.TokenExpiredError) throw new AppError('TOKEN_EXPIRED', 'Your session has expired.');
     throw new AppError('UNAUTHENTICATED', 'Please sign in.');
@@ -56,12 +56,13 @@ export function clearRefreshCookie(res: Response) {
 }
 
 /** Create a session (new refresh-token family) and return an access token. Needs a DB context. */
-export async function startSession(req: Request, res: Response, userId: string, tenantId: string | null, roleId: string | null) {
+export async function startSession(req: Request, res: Response, userId: string, tenantId: string | null, roleId: string | null, workspace: AuthClaims['ws'] = 'tenant') {
   const refresh = randomToken();
   const session = await db().userSession.create({
     data: {
       userId,
-      tenantId,
+      tenantId: workspace === 'console' ? null : tenantId,
+      workspace,
       familyId: crypto.randomUUID(),
       refreshTokenHash: sha256(refresh),
       userAgent: req.header('user-agent')?.slice(0, 300),
@@ -70,7 +71,7 @@ export async function startSession(req: Request, res: Response, userId: string, 
     },
   });
   setRefreshCookie(res, refresh);
-  return signAccessToken({ sub: userId, tid: tenantId, rid: roleId, sid: session.id });
+  return signAccessToken({ sub: userId, tid: session.tenantId, rid: roleId, sid: session.id, ws: workspace });
 }
 
 /**
@@ -96,6 +97,7 @@ export async function rotateSession(req: Request, res: Response, refresh: string
     data: {
       userId: current.userId,
       tenantId: current.tenantId,
+      workspace: current.workspace,
       familyId: current.familyId,
       refreshTokenHash: sha256(next),
       userAgent: req.header('user-agent')?.slice(0, 300),

@@ -15,6 +15,20 @@ const CRUD: PermissionAction[] = ['view', 'create', 'edit', 'delete'];
 const CRUDX: PermissionAction[] = ['view', 'create', 'edit', 'delete', 'export'];
 
 export const PERMISSION_CATALOG: Record<PermissionModule, ResourceDef[]> = {
+  // Console (AHEAD team). Scope on these keys: all = every client, team = clients brought in by
+  // me and the people reporting to me, own = clients I brought in (design v2 §2).
+  platform: [
+    { resource: 'dashboard', label: 'Console dashboard', actions: ['view'] },
+    { resource: 'tenant', label: 'Clients', actions: ['view', 'create', 'edit'] },
+    { resource: 'plan', label: 'Plans, prices & coupons', actions: ['view', 'edit'] },
+    { resource: 'setting', label: 'Platform settings', actions: ['view', 'edit'] },
+    { resource: 'grace', label: 'Grace periods', actions: ['create'] },
+    { resource: 'payment', label: 'Payments & AHEAD invoices', actions: ['view', 'create', 'approve'] },
+    { resource: 'commission', label: 'Commission reports', actions: ['view'] },
+    { resource: 'support', label: 'Support access', actions: ['create'] },
+    { resource: 'member', label: 'Console users', actions: ['view', 'create', 'edit'] },
+    { resource: 'audit', label: 'Platform audit log', actions: ['view'] },
+  ],
   tenant: [
     { resource: 'settings', label: 'Business settings', actions: ['view', 'edit'] },
     { resource: 'branch', label: 'Branches', actions: ['view', 'create', 'edit'] },

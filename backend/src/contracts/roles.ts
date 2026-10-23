@@ -2,7 +2,7 @@ import type { PermissionScope, RoleLayer, RoleType } from '@prisma/client';
 import { PERMISSIONS } from './permissions';
 import type { ModuleKey } from './modules';
 
-// Predefined roles (Roles & Permissions Design): 7 platform/partner/vendor + 4 core + 17 module roles.
+// Predefined roles: 7 Console roles (design v2) + 2 partner roles (v2, unused) + 4 core + 17 module roles.
 // Grants use patterns: "crm.*", "crm.contact.*", "*.view", "billing.invoice.create".
 
 type Grant = [pattern: string, scope: PermissionScope];
@@ -31,13 +31,16 @@ const SENSITIVE_ALL = [
 
 export const ROLES: RoleDef[] = [
   // ── Platform, partner & vendor (permissions for these layers arrive with the admin console) ──
-  { key: 'super_admin', name: 'Super Admin', layer: 'platform', roleType: 'admin', description: 'Everything: tenants, plans, prices, partners, vendors, payouts, settings', requiredModules: [], isSystem: true, grants: [] },
-  { key: 'platform_ops', name: 'Platform Operations', layer: 'platform', roleType: 'user', description: 'Tenant support actions, vendor KYC queue, manual vendor assignment', requiredModules: [], grants: [] },
-  { key: 'platform_support', name: 'Support Agent', layer: 'platform', roleType: 'user', description: 'Read tenant account and subscription status; no business data without consent', requiredModules: [], grants: [] },
-  { key: 'finance_payout_admin', name: 'Finance & Payout Admin', layer: 'platform', roleType: 'user', description: 'Partner charges, vendor commission, payout approval', requiredModules: [], grants: [] },
+  // Console roles (design v2 §2)
+  { key: 'super_admin', name: 'Super Admin', layer: 'platform', roleType: 'admin', description: 'Everything in the Console: clients, plans, prices, settings, payments, Console users', requiredModules: [], isSystem: true, grants: [['platform.*', 'all']] },
+  { key: 'platform_ops', name: 'Operations / Support', layer: 'platform', roleType: 'user', description: 'Client list and detail, onboarding help, grace periods, support access with consent', requiredModules: [], grants: [['platform.dashboard.view', 'all'], ['platform.tenant.*', 'all'], ['platform.grace.create', 'all'], ['platform.support.create', 'all'], ['platform.plan.view', 'all'], ['platform.setting.view', 'all'], ['platform.member.view', 'all'], ['platform.audit.view', 'all']] },
+  { key: 'platform_support', name: 'Support Agent', layer: 'platform', roleType: 'user', description: 'Read client account and subscription status; support access with consent', requiredModules: [], grants: [['platform.dashboard.view', 'all'], ['platform.tenant.view', 'all'], ['platform.support.create', 'all']] },
+  { key: 'finance_payout_admin', name: 'Finance', layer: 'platform', roleType: 'user', description: 'Payments, offline payments, AHEAD invoices, refunds, commission reports', requiredModules: [], grants: [['platform.dashboard.view', 'all'], ['platform.tenant.view', 'all'], ['platform.payment.*', 'all'], ['platform.plan.view', 'all'], ['platform.commission.view', 'all'], ['platform.audit.view', 'all']] },
+  { key: 'console_sales_manager', name: 'Sales Manager', layer: 'platform', roleType: 'salesperson', description: 'New clients, payment links and the pipeline of the whole sales team', requiredModules: [], grants: [['platform.dashboard.view', 'team'], ['platform.tenant.view', 'team'], ['platform.tenant.create', 'team'], ['platform.payment.view', 'team'], ['platform.commission.view', 'team'], ['platform.plan.view', 'all'], ['platform.member.view', 'team']] },
+  { key: 'console_sales_executive', name: 'Sales Executive', layer: 'platform', roleType: 'salesperson', description: 'New clients (within own discount limit) and payment links for own clients', requiredModules: [], grants: [['platform.dashboard.view', 'own'], ['platform.tenant.view', 'own'], ['platform.tenant.create', 'own'], ['platform.payment.view', 'own'], ['platform.commission.view', 'own'], ['platform.plan.view', 'all']] },
   { key: 'partner_admin', name: 'Partner Admin', layer: 'partner', roleType: 'admin', description: 'Partner branding, own tenants, onboarding, charges due to AHEAD', requiredModules: [], grants: [] },
   { key: 'partner_staff', name: 'Partner Staff', layer: 'partner', roleType: 'user', description: "Onboard and support the partner's tenants; no billing settings", requiredModules: [], grants: [] },
-  { key: 'vendor', name: 'Vendor', layer: 'vendor', roleType: 'user', description: 'Own referral link and code, referred clients, commission and payouts', requiredModules: [], grants: [] },
+  { key: 'vendor', name: 'Vendor', layer: 'platform', roleType: 'user', description: 'Own referral link and code; name, plan and status of referred clients; own commission', requiredModules: [], grants: [['platform.dashboard.view', 'own'], ['platform.tenant.view', 'own'], ['platform.commission.view', 'own']] },
 
   // ── Tenant core roles (always visible) ──
   {
@@ -184,8 +187,11 @@ const matches = (pattern: string, key: string) => {
 /** Expand a role's grant patterns to concrete permission keys (most specific grant wins). */
 export function expandGrants(role: RoleDef): Map<string, PermissionScope> {
   const result = new Map<string, PermissionScope>();
+  const consoleRole = role.layer !== 'tenant';
   for (const [pattern, scope] of role.grants) {
     for (const p of PERMISSIONS) {
+      // Console keys only ever go to Console roles, and Console roles get nothing else
+      if ((p.moduleKey === 'platform') !== consoleRole) continue;
       if (p.moduleKey === 'tenant' && pattern.startsWith('*.')) {
         // wildcards over modules only include tenant settings views, never admin actions
         if (!['tenant.settings.view', 'tenant.branch.view'].includes(p.key)) continue;

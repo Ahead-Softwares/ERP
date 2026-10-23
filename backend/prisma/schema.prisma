@@ -88,6 +88,14 @@ enum AcquisitionMethod {
   @@map("acquisition_method")
 }
 
+/// Which side of the app a session works in (design v2: Console + Business ERP)
+enum Workspace {
+  tenant
+  console
+
+  @@map("workspace")
+}
+
 enum BillingOwner {
   self
   partner
@@ -221,8 +229,9 @@ model User {
   createdAt        DateTime   @default(now()) @map("created_at") @db.Timestamptz
   updatedAt        DateTime   @updatedAt @map("updated_at") @db.Timestamptz
 
-  sessions    UserSession[]
-  memberships TenantMember[]
+  sessions       UserSession[]
+  memberships    TenantMember[]
+  platformMember PlatformMember?
 
   @@map("users")
 }
@@ -232,6 +241,7 @@ model UserSession {
   userId           String    @map("user_id") @db.Uuid
   familyId         String    @map("family_id") @db.Uuid
   tenantId         String?   @map("tenant_id") @db.Uuid // tenant the session is currently working in
+  workspace        Workspace @default(tenant) // console = AHEAD team workspace (tenantId is null)
   refreshTokenHash String    @unique @map("refresh_token_hash")
   userAgent        String?   @map("user_agent")
   ip               String?
@@ -357,6 +367,25 @@ model Invitation {
   @@map("invitations")
 }
 
+/// Platform table (no RLS, never visible to tenants): a member of the AHEAD team in the Console.
+/// reportsTo builds the sales hierarchy used by the "team" scope.
+model PlatformMember {
+  id            String       @id @default(uuid(7)) @db.Uuid
+  userId        String       @unique @map("user_id") @db.Uuid
+  roleId        String       @map("role_id") @db.Uuid
+  reportsTo     String?      @map("reports_to") @db.Uuid // user id of the manager
+  status        MemberStatus @default(active)
+  createdBy     String?      @map("created_by") @db.Uuid
+  joinedAt      DateTime     @default(now()) @map("joined_at") @db.Timestamptz
+  deactivatedAt DateTime?    @map("deactivated_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id])
+  role Role @relation(fields: [roleId], references: [id])
+
+  @@index([reportsTo])
+  @@map("platform_members")
+}
+
 /// Platform table (no RLS, never visible to tenants): who brought the tenant in.
 /// Written once by createTenant() and locked; only a Super Admin may change it, with a reason.
 model TenantAcquisition {
@@ -421,9 +450,10 @@ model Role {
   version         Int       @default(1)
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
 
-  permissions RolePermission[]
-  fieldAccess RoleFieldAccess[]
-  members     TenantMember[]
+  permissions     RolePermission[]
+  fieldAccess     RoleFieldAccess[]
+  members         TenantMember[]
+  platformMembers PlatformMember[]
 
   @@index([tenantId])
   @@map("roles")

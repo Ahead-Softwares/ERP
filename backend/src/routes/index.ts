@@ -9,6 +9,7 @@ import financeRoutes from '../modules/finance/routes';
 import taskRoutes from '../modules/tasks/routes';
 import bookingRoutes from '../modules/bookings/routes';
 import reportRoutes from '../modules/reports/routes';
+import consoleRoutes from '../modules/console/routes';
 
 const router = Router();
 
@@ -25,6 +26,7 @@ router.get('/health', async (_req, res) => {
 
 router.use('/auth', identityRoutes);
 router.use('/me', meHandler);
+router.use('/console', consoleRoutes); // AHEAD team workspace; before the tenant routers
 router.use('/', publicBilling); // public share links, before any authenticated router
 router.use('/', tenancyRoutes);
 router.use('/', catalogRoutes);

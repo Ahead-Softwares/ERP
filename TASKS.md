@@ -145,11 +145,17 @@ Design: `Platform design - Multi level flow, super admin, verder, partner.docx` 
 - [x] Tests (30/30 green): seed keeps DB edits, reset restores defaults, settings fallback/validation/versioning, acquisition rules and lock, internal tenant, new platform tables closed to `app_user`
 - Note: `direct_paid` is stored but not used yet — the `incomplete` subscription state arrives in Step 4
 
-### Step 2 — R3-lite: Console workspace
-- [ ] `platform_members` (user, Console role, team, reports_to); Console roles: Super Admin, Operations/Support, Finance, Sales Manager, Sales Executive, Vendor
-- [ ] Token carries the workspace (`ws = console | tenant:<id>`); `requirePlatformPermission` with scope all / team / own
-- [ ] Super Admin bootstrap script; workspace switcher; empty `/console` shell
-- [ ] Tests: tenant users get 403 on Console routes; Console users cannot read tenant business data; RLS suite green
+### Step 2 — R3-lite: Console workspace — done 2026-10-23
+- [x] `platform_members` (user, Console role, `reports_to`, status) — platform table, closed to `app_user`
+- [x] 18 `platform.*` permissions; 7 Console roles: Super Admin, Operations / Support, Support Agent, Finance, Sales Manager (`team`), Sales Executive (`own`), Vendor (`own`). Console keys only go to Console roles and vice versa (`expandGrants`)
+- [x] Token and session carry the workspace (`ws = tenant | console`); old tokens count as tenant; refresh keeps the workspace and drops a removed Console member back to tenant
+- [x] `consoleAuth` + `requirePlatformPermission` + `consoleTx`; scope filter over clients by `tenant_acquisitions` (own / team via reporting tree / all)
+- [x] `POST /auth/switch-console`; login lands Console-only users in the Console; `/me` returns `workspace` + `console` (role, permissions)
+- [x] `GET /console/me`, `GET /console/dashboard` (client counts in scope)
+- [x] Bootstrap: `npm run console:member -- --email … --role super_admin [--name --mobile] [--reports-to …] [--deactivate]` (new users have no password: mobile OTP or "Forgot password")
+- [x] Frontend: `/console` shell (sidebar by permission, Step 3 items marked "Soon"), dashboard, workspace switcher in both shells, login and `/app` route Console sessions to `/console`
+- [x] Tests (38/38 green): role separation, route guards, old-token default, tenant token refused by Console, team/own/all scope; checked in the browser (switch in and out) and via API (login → Console → refresh → logout)
+- Dev data: test Super Admin `console-admin@example.test` (mobile `+919000000011`, OTP login)
 
 ### Step 3 — Console screens
 - [ ] Dashboard (clients, trials ending, active / past_due, MRR); Clients list + detail (plan, entitlements, usage, acquisition)

@@ -54,7 +54,7 @@ export async function effectivePermissions(tenantId: string, roleId: string) {
   const out: Record<string, PermissionScope> = {};
   for (const p of PERMISSIONS) {
     const scope = perms.get(p.key);
-    if (!scope) continue;
+    if (!scope || p.moduleKey === 'platform') continue;
     if (p.moduleKey !== 'tenant') {
       const m = ent.modules[p.moduleKey];
       if (m.status === 'inactive') continue;

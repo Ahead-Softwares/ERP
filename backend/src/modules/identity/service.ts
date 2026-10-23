@@ -7,6 +7,7 @@ import { getEntitlements } from '../subscription/entitlements';
 import { effectivePermissions, getFieldAccess, getMember } from '../access/service';
 import { getTerms } from '../config/service';
 import { audit } from '../audit/service';
+import { consoleAccess } from '../console/service';
 import { sendMessage } from '../notifications/service';
 import { signPurposeToken, startSession } from './tokens';
 
@@ -32,8 +33,12 @@ export async function completeLogin(req: Request, res: Response, userId: string,
     where: { id: user.id },
     data: { lastLoginAt: new Date(), failedLogins: 0, lockedUntil: null, lastTenantId: membership?.tenantId ?? user.lastTenantId },
   });
-  const accessToken = await startSession(req, res, user.id, membership?.tenantId ?? null, membership?.roleId ?? null);
-  await audit({ tenantId: membership?.tenantId ?? null, actorId: user.id, action: 'auth.login', after: { method }, ip: req.ip, requestId: req.requestId });
+  // AHEAD team members with no business of their own land in the Console
+  const platform = membership ? null : await tx.platformMember.findUnique({ where: { userId: user.id } });
+  const accessToken = platform?.status === 'active'
+    ? await startSession(req, res, user.id, null, platform.roleId, 'console')
+    : await startSession(req, res, user.id, membership?.tenantId ?? null, membership?.roleId ?? null);
+  await audit({ tenantId: membership?.tenantId ?? null, actorId: user.id, action: 'auth.login', after: { method, workspace: platform?.status === 'active' ? 'console' : 'tenant' }, ip: req.ip, requestId: req.requestId });
   return { accessToken };
 }
 
@@ -72,22 +77,28 @@ export async function setPassword(userId: string, password: string) {
   await db().user.update({ where: { id: userId }, data: { passwordHash: await hashPassword(password), failedLogins: 0, lockedUntil: null } });
 }
 
-/** GET /me — everything the frontend needs to render the app for the current tenant. */
-export async function buildMe(userId: string, tenantId: string | null) {
+/** GET /me — everything the frontend needs to render the app for the current workspace. */
+export async function buildMe(userId: string, tenantId: string | null, workspace: 'tenant' | 'console' = 'tenant') {
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
-  const memberships = await prisma.tenantMember.findMany({
-    where: { userId, status: 'active', tenant: { status: { not: 'purged' } } },
-    include: { tenant: { select: { id: true, name: true, status: true, logoUrl: true } }, role: { select: { name: true } } },
-  });
+  const [memberships, consoleInfo] = await Promise.all([
+    prisma.tenantMember.findMany({
+      where: { userId, status: 'active', tenant: { status: { not: 'purged' } } },
+      include: { tenant: { select: { id: true, name: true, status: true, logoUrl: true } }, role: { select: { name: true } } },
+    }),
+    consoleAccess(userId),
+  ]);
 
   const base = {
+    workspace: workspace === 'console' && consoleInfo ? ('console' as const) : ('tenant' as const),
     user: {
       id: user.id, name: user.name, email: user.email, mobile: user.mobile,
       emailVerified: !!user.emailVerifiedAt, mobileVerified: !!user.mobileVerifiedAt,
     },
     memberships: memberships.map((m) => ({ tenantId: m.tenantId, name: m.tenant.name, status: m.tenant.status, logoUrl: m.tenant.logoUrl, roleName: m.role.name })),
+    /** Present only for AHEAD team members; drives the workspace switcher */
+    console: consoleInfo,
   };
-  if (!tenantId) return { ...base, tenant: null };
+  if (!tenantId || base.workspace === 'console') return { ...base, tenant: null };
 
   const member = await getMember(tenantId, userId);
   if (!member || member.status !== 'active') return { ...base, tenant: null };

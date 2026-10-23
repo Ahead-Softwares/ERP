@@ -27,6 +27,18 @@ export interface PlatformCtx {
   userId?: string;
 }
 
+/** A signed-in AHEAD team member working in the Console (design v2, R3-lite) */
+export interface ConsoleCtx extends PlatformCtx {
+  userId: string;
+  memberId: string;
+  roleId: string;
+  sessionId: string;
+  requestId?: string;
+  ip?: string;
+  /** Data scope granted for the permission checked on this request */
+  scope?: PermissionScope;
+}
+
 export type Ctx = TenantCtx | SystemCtx | PlatformCtx;
 
 export interface AuthClaims {
@@ -34,6 +46,7 @@ export interface AuthClaims {
   tid: string | null; // tenant id
   rid: string | null; // role id
   sid: string; // session id
+  ws: 'tenant' | 'console'; // workspace; tokens issued before the Console default to tenant
 }
 
 declare global {
@@ -43,6 +56,7 @@ declare global {
       requestId: string;
       auth?: AuthClaims;
       ctx?: TenantCtx;
+      console?: ConsoleCtx;
     }
   }
 }

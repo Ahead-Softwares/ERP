@@ -15,6 +15,10 @@ interface AuthState {
   /** Retry restoring the session after the server was unavailable */
   retry: () => Promise<void>
   switchTenant: (tenantId: string) => Promise<void>
+  /** AHEAD team only: move this session into the Console */
+  switchToConsole: () => Promise<void>
+  /** Console permission check (UI only; the API enforces it) */
+  canConsole: (permission: string) => boolean
   /** UI convenience only — the API enforces every permission */
   can: (permission: string) => boolean
   canView: (module: ModuleKey | "tenant") => boolean
@@ -87,6 +91,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [reload]
   )
 
+  const switchToConsole = React.useCallback(async () => {
+    const { accessToken } = await api.post<{ accessToken: string }>("/auth/switch-console")
+    setAccessToken(accessToken)
+    await reload()
+  }, [reload])
+
   const value = React.useMemo<AuthState>(
     () => ({
       status,
@@ -96,11 +106,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       reload,
       retry: restore,
       switchTenant,
+      switchToConsole,
+      canConsole: (p) => !!me?.console?.permissions?.[p],
       can: (p) => !!me?.permissions?.[p],
       canView: (m) => Object.keys(me?.permissions ?? {}).some((k) => k.startsWith(`${m}.`) && k.endsWith(".view")),
       term: (key, fallback) => me?.terms?.[key] ?? fallback ?? key,
     }),
-    [status, me, signIn, signOut, reload, restore, switchTenant]
+    [status, me, signIn, signOut, reload, restore, switchTenant, switchToConsole]
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

@@ -1,10 +1,13 @@
 import type { NextFunction, Request, Response } from 'express';
-import { withTenant } from '../kernel/db';
+import { withPlatform, withTenant } from '../kernel/db';
 import { AppError } from '../kernel/errors';
 import { verifyAccessToken } from '../modules/identity/tokens';
 import { getMember, getRolePermissions } from '../modules/access/service';
 import { getEntitlements } from '../modules/subscription/entitlements';
+import { getPlatformMember } from '../modules/console/service';
 import { PERMISSION_BY_KEY, isReadAction } from '../contracts/permissions';
+
+type Handler = (req: Request, res: Response) => Promise<unknown>;
 
 /** Verify the Bearer access token and attach claims. */
 export function authenticate(req: Request, _res: Response, next: NextFunction) {
@@ -44,15 +47,16 @@ export const tenantAuth = [authenticate, tenantContext];
  */
 export function requirePermission(key: string) {
   const def = PERMISSION_BY_KEY.get(key);
-  if (!def) throw new Error(`Unknown permission key: ${key}`);
+  if (!def || def.moduleKey === 'platform') throw new Error(`Unknown permission key: ${key}`);
+  const moduleKey = def.moduleKey;
 
   return async (req: Request, _res: Response, next: NextFunction) => {
     const ctx = req.ctx;
     if (!ctx) throw new AppError('UNAUTHENTICATED', 'Please sign in.');
 
-    if (def.moduleKey !== 'tenant') {
+    if (moduleKey !== 'tenant') {
       const ent = await getEntitlements(ctx.tenantId);
-      const m = ent.modules[def.moduleKey];
+      const m = ent.modules[moduleKey];
       if (m.status === 'inactive') throw new AppError('MODULE_NOT_ENTITLED', 'This module is not part of your plan.', { module: def.moduleKey });
       if (def.tier === 'full' && m.tier !== 'full') throw new AppError('MODULE_NOT_ENTITLED', 'This feature needs a paid plan.', { module: def.moduleKey, feature: key });
       if (m.status === 'read_only' && !isReadAction(key)) throw new AppError('MODULE_READ_ONLY', 'This module is read-only on your current plan. Upgrade to make changes.', { module: def.moduleKey });
@@ -66,10 +70,41 @@ export function requirePermission(key: string) {
   };
 }
 
+/** Resolve the Console membership (design v2, R3-lite). Only Console-workspace tokens get in. */
+export async function consoleContext(req: Request, _res: Response, next: NextFunction) {
+  const auth = req.auth;
+  if (!auth || auth.ws !== 'console') throw new AppError('PERMISSION_DENIED', 'Switch to the AHEAD Console to do this.');
+  const member = await getPlatformMember(auth.sub);
+  if (!member || member.status !== 'active') throw new AppError('PERMISSION_DENIED', 'You are not an active member of the AHEAD team.');
+  req.console = { kind: 'platform', userId: auth.sub, memberId: member.id, roleId: member.roleId, sessionId: auth.sid, requestId: req.requestId, ip: req.ip };
+  next();
+}
+
+export const consoleAuth = [authenticate, consoleContext];
+
+/** Every Console route declares exactly one platform.* permission key; the scope lands on req.console. */
+export function requirePlatformPermission(key: string) {
+  const def = PERMISSION_BY_KEY.get(key);
+  if (!def || def.moduleKey !== 'platform') throw new Error(`Unknown Console permission key: ${key}`);
+
+  return async (req: Request, _res: Response, next: NextFunction) => {
+    const ctx = req.console;
+    if (!ctx) throw new AppError('UNAUTHENTICATED', 'Please sign in.');
+    const scope = (await getRolePermissions(ctx.roleId)).get(key);
+    if (!scope) throw new AppError('PERMISSION_DENIED', 'You do not have permission to do this.', { permission: key });
+    ctx.scope = scope;
+    next();
+  };
+}
+
+/** Run a Console handler in a platform transaction with the Console user as the actor. */
+export const consoleTx = (handler: Handler) => async (req: Request, res: Response) => {
+  if (!req.console) throw new AppError('UNAUTHENTICATED', 'Please sign in.');
+  await withPlatform(() => handler(req, res), req.console);
+};
+
 /** Explicit marker for routes that are intentionally unauthenticated. */
 export const publicRoute = (_req: Request, _res: Response, next: NextFunction) => next();
-
-type Handler = (req: Request, res: Response) => Promise<unknown>;
 
 /** Run the handler inside the request's tenant transaction (RLS-scoped). */
 export const tx = (handler: Handler) => async (req: Request, res: Response) => {

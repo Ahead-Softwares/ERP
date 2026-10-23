@@ -13,7 +13,7 @@ import { useAuth } from "@/lib/auth"
 
 export default function LoginPage() {
   const router = useRouter()
-  const { signIn, status } = useAuth()
+  const { signIn, status, me } = useAuth()
   const [error, setError] = React.useState<string | null>(null)
   const [busy, setBusy] = React.useState(false)
 
@@ -27,12 +27,12 @@ export default function LoginPage() {
   const [devCode, setDevCode] = React.useState<string | undefined>()
 
   React.useEffect(() => {
-    if (status === "authenticated") router.replace("/app")
-  }, [status, router])
+    if (status === "authenticated") router.replace(me?.workspace === "console" ? "/console" : "/app")
+  }, [status, me, router])
 
   async function finish(accessToken: string) {
-    await signIn(accessToken)
-    router.replace("/app")
+    const signedIn = await signIn(accessToken)
+    router.replace(signedIn.workspace === "console" ? "/console" : "/app")
   }
 
   async function onPassword(e: React.FormEvent) {

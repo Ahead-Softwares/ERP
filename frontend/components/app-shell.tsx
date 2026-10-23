@@ -4,7 +4,7 @@ import * as React from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { Bell, Check, ChevronsUpDown, CreditCard, Lock, LogOut, Menu, Settings, X } from "lucide-react"
+import { Bell, Check, ChevronsUpDown, CreditCard, Lock, LogOut, Menu, Settings, ShieldCheck, X } from "lucide-react"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -24,7 +24,7 @@ import { formatDateTime, initials } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { useApi } from "@/lib/use-api"
 
-function NavLink({ href, active, children, onClick }: { href: string; active: boolean; children: React.ReactNode; onClick?: () => void }) {
+export function NavLink({ href, active, children, onClick }: { href: string; active: boolean; children: React.ReactNode; onClick?: () => void }) {
   return (
     <Link
       href={href}
@@ -88,43 +88,63 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   )
 }
 
-function TenantSwitcher() {
-  const { me, switchTenant } = useAuth()
+/** design v2: one menu to move between the AHEAD Console and the user's businesses */
+export function WorkspaceSwitcher() {
+  const { me, switchTenant, switchToConsole } = useAuth()
   const router = useRouter()
-  if (!me?.tenant) return null
+  if (!me) return null
+  const inConsole = me.workspace === "console"
+  if (!inConsole && !me.tenant) return null
+  const title = inConsole ? "AHEAD Console" : me.tenant!.name
+  const subtitle = inConsole ? me.console?.role.name : me.role?.name
+  const go = async (fn: () => Promise<void>, href: string) => {
+    try {
+      await fn()
+      router.push(href)
+    } catch (e) {
+      toast.error(errorMessage(e))
+    }
+  }
   return (
     <DropdownMenu>
       <DropdownMenuTrigger className="flex min-w-0 items-center gap-2 rounded-2xl px-2 py-1.5 text-left hover:bg-muted">
         <span className="grid size-8 shrink-0 place-items-center rounded-xl bg-primary text-xs font-bold text-primary-foreground">
-          {initials(me.tenant.name)}
+          {inConsole ? <ShieldCheck className="size-4" /> : initials(title)}
         </span>
         <span className="min-w-0">
-          <span className="block truncate text-sm font-semibold">{me.tenant.name}</span>
-          <span className="block truncate text-xs text-muted-foreground">{me.role?.name}</span>
+          <span className="block truncate text-sm font-semibold">{title}</span>
+          <span className="block truncate text-xs text-muted-foreground">{subtitle}</span>
         </span>
         <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-64">
-        <DropdownMenuGroup>
-          <DropdownMenuLabel>Your businesses</DropdownMenuLabel>
-          {me.memberships.map((m) => (
-            <DropdownMenuItem
-              key={m.tenantId}
-              onClick={async () => {
-                if (m.tenantId === me.tenant?.id) return
-                try {
-                  await switchTenant(m.tenantId)
-                  router.push("/app")
-                } catch (e) {
-                  toast.error(errorMessage(e))
-                }
-              }}
-            >
-              <span className="flex-1 truncate">{m.name}</span>
-              {m.tenantId === me.tenant?.id && <Check className="size-4" />}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuGroup>
+        {me.console && (
+          <>
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>AHEAD team</DropdownMenuLabel>
+              <DropdownMenuItem onClick={() => !inConsole && go(switchToConsole, "/console")}>
+                <ShieldCheck className="size-4" />
+                <span className="flex-1 truncate">AHEAD Console</span>
+                {inConsole && <Check className="size-4" />}
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+            {me.memberships.length > 0 && <DropdownMenuSeparator />}
+          </>
+        )}
+        {me.memberships.length > 0 && (
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>Your businesses</DropdownMenuLabel>
+            {me.memberships.map((m) => {
+              const current = !inConsole && m.tenantId === me.tenant?.id
+              return (
+                <DropdownMenuItem key={m.tenantId} onClick={() => !current && go(() => switchTenant(m.tenantId), "/app")}>
+                  <span className="flex-1 truncate">{m.name}</span>
+                  {current && <Check className="size-4" />}
+                </DropdownMenuItem>
+              )
+            })}
+          </DropdownMenuGroup>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   )
@@ -167,7 +187,7 @@ function Notifications() {
   )
 }
 
-function UserMenu() {
+export function UserMenu() {
   const { me, signOut } = useAuth()
   const router = useRouter()
   if (!me) return null
@@ -265,7 +285,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <div className="flex flex-1">
         <aside className="sticky top-0 hidden h-svh w-64 shrink-0 flex-col border-r bg-sidebar lg:flex">
           <div className="border-b p-3">
-            <TenantSwitcher />
+            <WorkspaceSwitcher />
           </div>
           <Sidebar />
         </aside>
@@ -275,7 +295,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <div className="absolute inset-0 bg-black/30" onClick={() => setMobileOpen(false)} />
             <aside className="absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col bg-sidebar shadow-xl">
               <div className="flex items-center justify-between border-b p-3">
-                <TenantSwitcher />
+                <WorkspaceSwitcher />
                 <Button variant="ghost" size="icon" onClick={() => setMobileOpen(false)} aria-label="Close navigation">
                   <X className="size-4" />
                 </Button>

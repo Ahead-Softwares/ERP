@@ -7,6 +7,7 @@ import { validate } from '../../middleware/request';
 import { authenticate, publicRoute } from '../../middleware/auth';
 import { loginLimiter, otpLimiter } from '../../middleware/rateLimit';
 import { getMember } from '../access/service';
+import { getPlatformMember } from '../console/service';
 import { createTenant } from '../tenancy/createTenant';
 import { audit } from '../audit/service';
 import { consumeOtp, sendOtp } from './otp';
@@ -126,6 +127,12 @@ router.post('/refresh', publicRoute, async (req, res) => {
   if (!refresh) throw new AppError('UNAUTHENTICATED', 'Please sign in.');
   const accessToken = await withPlatform(async () => {
     const session = await rotateSession(req, res, refresh);
+    if (session.workspace === 'console') {
+      // Removed from the AHEAD team since the last refresh: fall back to a session without a workspace
+      const platform = await getPlatformMember(session.userId);
+      if (platform?.status === 'active') return signAccessToken({ sub: session.userId, tid: null, rid: platform.roleId, sid: session.id, ws: 'console' });
+      await db().userSession.update({ where: { id: session.id }, data: { workspace: 'tenant' } });
+    }
     let tenantId = session.tenantId;
     let roleId: string | null = null;
     if (tenantId) {
@@ -133,7 +140,7 @@ router.post('/refresh', publicRoute, async (req, res) => {
       if (member?.status === 'active') roleId = member.roleId;
       else tenantId = null;
     }
-    return signAccessToken({ sub: session.userId, tid: tenantId, rid: roleId, sid: session.id });
+    return signAccessToken({ sub: session.userId, tid: tenantId, rid: roleId, sid: session.id, ws: 'tenant' });
   }).catch((e) => {
     clearRefreshCookie(res);
     throw e;
@@ -152,10 +159,21 @@ router.post('/switch-tenant', authenticate, validate(z.object({ tenantId: z.stri
   const member = await getMember(tenantId, req.auth!.sub);
   if (!member || member.status !== 'active') throw new AppError('TENANT_FORBIDDEN', 'You are not a member of this business.');
   await withPlatform(async () => {
-    await db().userSession.update({ where: { id: req.auth!.sid }, data: { tenantId } });
+    await db().userSession.update({ where: { id: req.auth!.sid }, data: { tenantId, workspace: 'tenant' } });
     await db().user.update({ where: { id: req.auth!.sub }, data: { lastTenantId: tenantId } });
   });
-  res.json({ accessToken: signAccessToken({ sub: req.auth!.sub, tid: tenantId, rid: member.roleId, sid: req.auth!.sid }) });
+  res.json({ accessToken: signAccessToken({ sub: req.auth!.sub, tid: tenantId, rid: member.roleId, sid: req.auth!.sid, ws: 'tenant' }) });
+});
+
+// Design v2: AHEAD team members switch between their businesses and the Console
+router.post('/switch-console', authenticate, async (req, res) => {
+  const platform = await getPlatformMember(req.auth!.sub);
+  if (!platform || platform.status !== 'active') throw new AppError('PERMISSION_DENIED', 'You are not an active member of the AHEAD team.');
+  await withPlatform(async () => {
+    await db().userSession.update({ where: { id: req.auth!.sid }, data: { tenantId: null, workspace: 'console' } });
+    await audit({ tenantId: null, actorId: req.auth!.sub, action: 'auth.switch_console' });
+  });
+  res.json({ accessToken: signAccessToken({ sub: req.auth!.sub, tid: null, rid: platform.roleId, sid: req.auth!.sid, ws: 'console' }) });
 });
 
 // ── Email verification & password reset ──
@@ -198,7 +216,7 @@ router.post(
 );
 
 export const meHandler = Router().get('/', authenticate, async (req, res) => {
-  res.json(await buildMe(req.auth!.sub, req.auth!.tid));
+  res.json(await buildMe(req.auth!.sub, req.auth!.tid, req.auth!.ws));
 });
 
 export default router;
