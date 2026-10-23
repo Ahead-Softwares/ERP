@@ -1,10 +1,10 @@
 import type { TenantStatus } from '@prisma/client';
-import { env } from '../../config/env';
 import { db } from '../../kernel/db';
 import { appError } from '../../kernel/errors';
 import { audit } from '../audit/service';
 import { publish } from '../events/outbox';
 import { persistEntitlements } from './entitlements';
+import { getSetting } from '../settings/service';
 
 // LLD §6.2 — allowed (from, event) pairs; anything else throws INVALID_TRANSITION.
 
@@ -65,7 +65,7 @@ export async function transition(tenantId: string, event: SubscriptionEvent, opt
       break;
     }
     case 'renewal_failed': {
-      const days = sub.cycle === 'yearly' ? env.GRACE_DAYS_YEARLY : env.GRACE_DAYS_MONTHLY;
+      const days = await getSetting(sub.cycle === 'yearly' ? 'grace.days_yearly' : 'grace.days_monthly');
       data.graceEndsAt = new Date(now.getTime() + days * DAY);
       break;
     }

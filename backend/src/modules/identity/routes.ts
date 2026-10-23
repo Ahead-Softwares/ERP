@@ -81,7 +81,8 @@ router.post('/signup', publicRoute, loginLimiter, validate(SignupBody), async (r
       owner: { kind: 'new', name: body.name, email: body.email, mobile: body.mobile, passwordHash, mobileVerified: true },
       businessName: body.businessName,
       industryKey: body.industryKey,
-      source: 'direct', // vendor attribution by coupon/link arrives with the referral module
+      // Vendor referral links/codes arrive with the referral module; the coupon is recorded now
+      acquisition: { byType: 'self', method: 'signup', couponCode: body.couponCode },
     });
     const accessToken = await startSession(req, res, created.user.id, created.tenant.id, created.ownerRoleId);
     await sendEmailVerification(created.user);

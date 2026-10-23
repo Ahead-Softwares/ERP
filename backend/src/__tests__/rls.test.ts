@@ -5,7 +5,7 @@ import { prisma, withTenant, db } from '../kernel/db';
 // Requires DATABASE_URL and at least two tenants (run the signup smoke test first).
 
 // Platform tables that carry tenant_id but are only reachable with platform privileges
-const PLATFORM_TABLES = ['trial_registry', 'user_sessions'];
+const PLATFORM_TABLES = ['trial_registry', 'user_sessions', 'tenant_acquisitions'];
 
 describe('row-level security', () => {
   afterAll(() => prisma.$disconnect());
@@ -50,6 +50,17 @@ describe('row-level security', () => {
         return tx.trialRegistry.findMany();
       }),
     ).rejects.toThrow(/permission denied/);
+  });
+
+  it('acquisition records and platform settings are not readable by app_user', async () => {
+    for (const read of [(tx: typeof prisma) => tx.tenantAcquisition.findMany(), (tx: typeof prisma) => tx.configValue.findMany()]) {
+      await expect(
+        prisma.$transaction(async (tx) => {
+          await tx.$executeRawUnsafe('SET LOCAL ROLE app_user');
+          return read(tx as unknown as typeof prisma);
+        }),
+      ).rejects.toThrow(/permission denied/);
+    }
   });
 
   it('without a tenant set, tenant tables return nothing', async () => {

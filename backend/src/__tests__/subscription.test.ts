@@ -3,6 +3,7 @@ import { nextStatus } from '../modules/subscription/stateMachine';
 import { resolveEntitlements, resolveLimits } from '../modules/subscription/entitlements';
 import { trialEnd } from '../modules/tenancy/createTenant';
 import { PLANS, TRIAL_LIMITS } from '../contracts/plans';
+import { MODULES } from '../contracts/modules';
 import { expandGrants, ROLES } from '../contracts/roles';
 
 describe('subscription state machine (LLD §6.2)', () => {
@@ -23,14 +24,16 @@ describe('subscription state machine (LLD §6.2)', () => {
 
 describe('entitlement resolver (LLD §6.3)', () => {
   const growth = new Set(PLANS.find((p) => p.key === 'growth')!.fullModules);
+  const freeTier = new Set(MODULES.filter((m) => m.freeTier).map((m) => m.key));
+  const free = PLANS.find((p) => p.key === 'free')!.limits;
 
   it('opens every module at full tier during the trial', () => {
-    const e = resolveEntitlements('trialing', new Set(), new Set());
+    const e = resolveEntitlements('trialing', new Set(), new Set(), freeTier);
     expect(Object.values(e).every((m) => m.status === 'active' && m.tier === 'full')).toBe(true);
   });
 
   it('after the trial: free modules stay active (basic), used paid modules become read-only, unused ones inactive', () => {
-    const e = resolveEntitlements('free', new Set(), new Set(['hr', 'inventory', 'crm']));
+    const e = resolveEntitlements('free', new Set(), new Set(['hr', 'inventory', 'crm']), freeTier);
     expect(e.crm).toEqual({ status: 'active', tier: 'basic' });
     expect(e.hr).toEqual({ status: 'read_only', tier: 'basic' });
     expect(e.inventory.status).toBe('read_only');
@@ -39,7 +42,7 @@ describe('entitlement resolver (LLD §6.3)', () => {
 
   it('paid plans unlock their modules at full tier, past_due keeps access', () => {
     for (const status of ['active', 'past_due'] as const) {
-      const e = resolveEntitlements(status, growth, new Set());
+      const e = resolveEntitlements(status, growth, new Set(), freeTier);
       expect(e.hr).toEqual({ status: 'active', tier: 'full' });
       expect(e.ai.status).toBe('inactive');
     }
@@ -47,9 +50,16 @@ describe('entitlement resolver (LLD §6.3)', () => {
 
   it('uses trial limits while trialing and Free limits after', () => {
     const growthLimits = PLANS.find((p) => p.key === 'growth')!.limits;
-    expect(resolveLimits('trialing', growthLimits)).toEqual(TRIAL_LIMITS);
-    expect(resolveLimits('free', growthLimits).users).toBe(3);
-    expect(resolveLimits('active', growthLimits)).toEqual(growthLimits);
+    const defaults = { trial: TRIAL_LIMITS, free };
+    expect(resolveLimits('trialing', growthLimits, defaults)).toEqual(TRIAL_LIMITS);
+    expect(resolveLimits('free', growthLimits, defaults).users).toBe(3);
+    expect(resolveLimits('active', growthLimits, defaults)).toEqual(growthLimits);
+  });
+
+  it('follows the free-tier flags it is given (editable in the database)', () => {
+    const e = resolveEntitlements('free', new Set(), new Set(), new Set(['crm', 'tasks']));
+    expect(e.crm.status).toBe('active');
+    expect(e.billing.status).toBe('inactive');
   });
 });
 

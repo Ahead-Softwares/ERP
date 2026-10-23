@@ -56,10 +56,36 @@ enum TenantStatus {
 enum TenantSource {
   direct
   vendor
-  admin
+  sales
   partner
 
   @@map("tenant_source")
+}
+
+/// How the tenant started: self-signup trial, or created by sales/vendor and paid up front
+enum OnboardingType {
+  trial
+  direct_paid
+
+  @@map("onboarding_type")
+}
+
+enum AcquiredByType {
+  self
+  vendor
+  sales_user
+  partner_user
+
+  @@map("acquired_by_type")
+}
+
+enum AcquisitionMethod {
+  signup
+  referral_link
+  referral_code
+  manual
+
+  @@map("acquisition_method")
 }
 
 enum BillingOwner {
@@ -236,32 +262,35 @@ model OtpCode {
 }
 
 model Tenant {
-  id               String       @id @default(uuid(7)) @db.Uuid
+  id               String         @id @default(uuid(7)) @db.Uuid
   name             String
-  legalName        String?      @map("legal_name")
-  industryKey      String       @map("industry_key")
-  templateVersion  Int          @map("template_version")
-  status           TenantStatus @default(trialing)
-  source           TenantSource @default(direct)
-  partnerId        String?      @map("partner_id") @db.Uuid
-  billingOwner     BillingOwner @default(self) @map("billing_owner")
-  gstin            String?      @db.VarChar(15)
-  billingStateCode String?      @map("billing_state_code") @db.Char(2)
+  legalName        String?        @map("legal_name")
+  industryKey      String         @map("industry_key")
+  templateVersion  Int            @map("template_version")
+  status           TenantStatus   @default(trialing)
+  source           TenantSource   @default(direct)
+  onboardingType   OnboardingType @default(trial) @map("onboarding_type")
+  isInternal       Boolean        @default(false) @map("is_internal")
+  partnerId        String?        @map("partner_id") @db.Uuid
+  billingOwner     BillingOwner   @default(self) @map("billing_owner")
+  gstin            String?        @db.VarChar(15)
+  billingStateCode String?        @map("billing_state_code") @db.Char(2)
   address          Json?
-  logoUrl          String?      @map("logo_url")
-  timezone         String       @default("Asia/Kolkata")
-  fyStartMonth     Int          @default(4) @map("fy_start_month") @db.SmallInt
-  ownerUserId      String       @map("owner_user_id") @db.Uuid
-  needsSeatChoice  Boolean      @default(false) @map("needs_seat_choice")
-  configAppliedAt  DateTime?    @map("config_applied_at") @db.Timestamptz
-  onboarding       Json         @default("{}")
-  closedAt         DateTime?    @map("closed_at") @db.Timestamptz
-  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt        DateTime     @updatedAt @map("updated_at") @db.Timestamptz
+  logoUrl          String?        @map("logo_url")
+  timezone         String         @default("Asia/Kolkata")
+  fyStartMonth     Int            @default(4) @map("fy_start_month") @db.SmallInt
+  ownerUserId      String         @map("owner_user_id") @db.Uuid
+  needsSeatChoice  Boolean        @default(false) @map("needs_seat_choice")
+  configAppliedAt  DateTime?      @map("config_applied_at") @db.Timestamptz
+  onboarding       Json           @default("{}")
+  closedAt         DateTime?      @map("closed_at") @db.Timestamptz
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime       @updatedAt @map("updated_at") @db.Timestamptz
 
   branches     Branch[]
   members      TenantMember[]
   subscription Subscription?
+  acquisition  TenantAcquisition?
 
   @@index([partnerId])
   @@index([status])
@@ -326,6 +355,26 @@ model Invitation {
 
   @@index([tenantId])
   @@map("invitations")
+}
+
+/// Platform table (no RLS, never visible to tenants): who brought the tenant in.
+/// Written once by createTenant() and locked; only a Super Admin may change it, with a reason.
+model TenantAcquisition {
+  tenantId         String            @id @map("tenant_id") @db.Uuid
+  acquiredByType   AcquiredByType    @map("acquired_by_type")
+  acquiredByUserId String?           @map("acquired_by_user_id") @db.Uuid
+  method           AcquisitionMethod
+  referralCode     String?           @map("referral_code")
+  couponCode       String?           @map("coupon_code")
+  lockedAt         DateTime          @default(now()) @map("locked_at") @db.Timestamptz
+  changedBy        String?           @map("changed_by") @db.Uuid
+  changeReason     String?           @map("change_reason")
+  updatedAt        DateTime          @updatedAt @map("updated_at") @db.Timestamptz
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([acquiredByUserId])
+  @@map("tenant_acquisitions")
 }
 
 /// Platform table (no RLS): prevents repeated trials by the same business.
@@ -471,6 +520,19 @@ model FormLayout {
 
 // ───────────────── Plans, subscriptions & entitlements ─────────────────
 
+/// Platform table: values for settings defined in contracts/config.ts. scope = 'platform' for now.
+model ConfigValue {
+  scope     String
+  key       String
+  value     Json
+  version   Int      @default(1)
+  updatedBy String?  @map("updated_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@id([scope, key])
+  @@map("config_values")
+}
+
 model Module {
   key          String   @id
   name         String
@@ -537,22 +599,22 @@ model Coupon {
 }
 
 model Subscription {
-  id                 String        @id @default(uuid(7)) @db.Uuid
-  tenantId           String        @unique @map("tenant_id") @db.Uuid
-  planId             String        @map("plan_id") @db.Uuid
+  id                 String       @id @default(uuid(7)) @db.Uuid
+  tenantId           String       @unique @map("tenant_id") @db.Uuid
+  planId             String       @map("plan_id") @db.Uuid
   status             TenantStatus
-  cycle              BillingCycle  @default(monthly)
-  trialEndsAt        DateTime?     @map("trial_ends_at") @db.Timestamptz
-  currentPeriodStart DateTime?     @map("current_period_start") @db.Timestamptz
-  currentPeriodEnd   DateTime?     @map("current_period_end") @db.Timestamptz
-  graceEndsAt        DateTime?     @map("grace_ends_at") @db.Timestamptz
-  cancelAtPeriodEnd  Boolean       @default(false) @map("cancel_at_period_end")
-  autoRenew          Boolean       @default(true) @map("auto_renew")
-  mandateId          String?       @map("mandate_id") @db.Uuid
-  purgeAt            DateTime?     @map("purge_at") @db.Timestamptz
-  version            Int           @default(1)
-  createdAt          DateTime      @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt          DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+  cycle              BillingCycle @default(monthly)
+  trialEndsAt        DateTime?    @map("trial_ends_at") @db.Timestamptz
+  currentPeriodStart DateTime?    @map("current_period_start") @db.Timestamptz
+  currentPeriodEnd   DateTime?    @map("current_period_end") @db.Timestamptz
+  graceEndsAt        DateTime?    @map("grace_ends_at") @db.Timestamptz
+  cancelAtPeriodEnd  Boolean      @default(false) @map("cancel_at_period_end")
+  autoRenew          Boolean      @default(true) @map("auto_renew")
+  mandateId          String?      @map("mandate_id") @db.Uuid
+  purgeAt            DateTime?    @map("purge_at") @db.Timestamptz
+  version            Int          @default(1)
+  createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime     @updatedAt @map("updated_at") @db.Timestamptz
 
   tenant           Tenant             @relation(fields: [tenantId], references: [id])
   items            SubscriptionItem[]

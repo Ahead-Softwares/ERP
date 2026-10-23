@@ -2,7 +2,9 @@ import type { EntitlementStatus, TenantStatus } from '@prisma/client';
 import { prisma, db } from '../../kernel/db';
 import { cache } from '../../kernel/cache';
 import { MODULES, MODULE_KEYS, type ModuleKey, type ModuleTier } from '../../contracts/modules';
-import { PLANS, TRIAL_LIMITS, type PlanLimits } from '../../contracts/plans';
+import type { PlanLimits } from '../../contracts/plans';
+import { getSetting } from '../settings/service';
+import { getCatalog } from './catalog';
 
 // SUB-04: the entitlement table is the single source the app reads to unlock modules.
 
@@ -21,13 +23,13 @@ export interface EntitlementSnapshot {
   modules: Record<ModuleKey, ModuleEntitlement>;
 }
 
-const FREE_LIMITS = PLANS.find((p) => p.key === 'free')!.limits;
 const PAID_STATES: TenantStatus[] = ['active', 'past_due'];
 
 export function resolveEntitlements(
   status: TenantStatus,
   fullModules: Set<string>,
   everUsed: Set<string>,
+  freeTier: Set<string>,
 ): Record<ModuleKey, ModuleEntitlement> {
   const out = {} as Record<ModuleKey, ModuleEntitlement>;
   for (const m of MODULES) {
@@ -35,17 +37,22 @@ export function resolveEntitlements(
     if (status === 'trialing') e = { status: 'active', tier: 'full' };
     else if (status === 'closed' || status === 'purged') e = { status: everUsed.has(m.key) ? 'read_only' : 'inactive', tier: 'basic' };
     else if (PAID_STATES.includes(status) && fullModules.has(m.key)) e = { status: 'active', tier: 'full' };
-    else if (m.freeTier) e = { status: 'active', tier: 'basic' };
+    else if (freeTier.has(m.key)) e = { status: 'active', tier: 'basic' };
     else e = { status: everUsed.has(m.key) ? 'read_only' : 'inactive', tier: 'basic' };
     out[m.key] = e;
   }
   return out;
 }
 
-export function resolveLimits(status: TenantStatus, planLimits: PlanLimits): PlanLimits {
-  if (status === 'trialing') return TRIAL_LIMITS;
+export function resolveLimits(status: TenantStatus, planLimits: PlanLimits, defaults: { trial: PlanLimits; free: PlanLimits }): PlanLimits {
+  if (status === 'trialing') return defaults.trial;
   if (PAID_STATES.includes(status)) return planLimits;
-  return FREE_LIMITS;
+  return defaults.free;
+}
+
+async function limitDefaults() {
+  const [catalog, trial] = await Promise.all([getCatalog(), getSetting('trial.limits')]);
+  return { catalog, defaults: { trial, free: catalog.freeLimits } };
 }
 
 async function loadSubscription(tenantId: string, client: Pick<typeof prisma, 'subscription'>) {
@@ -67,8 +74,9 @@ export async function persistEntitlements(tenantId: string) {
   }
   const rows = await tx.tenantEntitlement.findMany({ where: { tenantId } });
   const everUsed = new Set(rows.filter((r) => r.activatedAt).map((r) => r.moduleKey));
-  const resolved = resolveEntitlements(sub.status, full, everUsed);
-  const limits = resolveLimits(sub.status, plan.limits as unknown as PlanLimits);
+  const { catalog, defaults } = await limitDefaults();
+  const resolved = resolveEntitlements(sub.status, full, everUsed, catalog.freeTierModules);
+  const limits = resolveLimits(sub.status, plan.limits as unknown as PlanLimits, defaults);
   const now = new Date();
 
   for (const key of MODULE_KEYS) {
@@ -102,7 +110,7 @@ export function getEntitlements(tenantId: string): Promise<EntitlementSnapshot> 
       planKey: plan.key,
       trialEndsAt: sub.trialEndsAt,
       currentPeriodEnd: sub.currentPeriodEnd,
-      limits: resolveLimits(sub.status, plan.limits as unknown as PlanLimits),
+      limits: resolveLimits(sub.status, plan.limits as unknown as PlanLimits, (await limitDefaults()).defaults),
       modules,
     };
   });

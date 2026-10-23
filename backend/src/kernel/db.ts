@@ -41,8 +41,8 @@ export async function withTenant<T>(ctx: Ctx & { tenantId: string }, fn: () => P
  * Run fn in one transaction with platform privileges (no RLS). Only platform
  * modules (identity, tenancy creation, subscription, billing-platform, jobs) may use this.
  */
-export async function withPlatform<T>(fn: () => Promise<T>, ctx: Ctx = { kind: 'platform' }): Promise<T> {
+export async function withPlatform<T>(fn: () => Promise<T>, ctx: Ctx = { kind: 'platform' }, opts: { timeoutMs?: number } = {}): Promise<T> {
   const existing = als.getStore();
   if (existing && existing.ctx.kind === 'platform') return fn();
-  return prisma.$transaction(async (tx) => als.run({ tx, ctx }, fn), TX_OPTIONS);
+  return prisma.$transaction(async (tx) => als.run({ tx, ctx }, fn), opts.timeoutMs ? { ...TX_OPTIONS, timeout: opts.timeoutMs } : TX_OPTIONS);
 }

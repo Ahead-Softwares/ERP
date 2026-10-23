@@ -6,10 +6,9 @@ import { validate } from '../../middleware/request';
 import { publicRoute, requirePermission, tenantAuth, tx } from '../../middleware/auth';
 import { publicLimiter } from '../../middleware/rateLimit';
 import { PERMISSIONS } from '../../contracts/permissions';
-import { MODULES } from '../../contracts/modules';
-import { PLANS, ADDON_MONTHLY_PAISE, EXTRA_USER_MONTHLY_PAISE } from '../../contracts/plans';
 import { TEMPLATES } from '../../contracts/templates';
 import { getEntitlements } from '../subscription/entitlements';
+import { getCatalog } from '../subscription/catalog';
 import { visibleRoles } from '../access/service';
 import { listAudit } from '../audit/service';
 import { listNotifications, markRead } from '../notifications/service';
@@ -26,11 +25,12 @@ router.get('/public/industries', publicRoute, publicLimiter, (_req, res) => {
   res.json({ data: TEMPLATES.map((t) => ({ key: t.key, name: t.name, description: t.description })) });
 });
 
-router.get('/billing/plans', publicRoute, publicLimiter, (_req, res) => {
+router.get('/billing/plans', publicRoute, publicLimiter, async (_req, res) => {
+  const catalog = await getCatalog();
   res.json({
-    plans: PLANS.filter((p) => p.isPublic).map((p) => ({ key: p.key, name: p.name, tagline: p.tagline, limits: p.limits, fullModules: p.fullModules, monthlyPaise: p.monthlyPaise, yearlyPaise: p.yearlyPaise })),
-    modules: MODULES.map((m) => ({ key: m.key, name: m.name, category: m.category, description: m.description, freeTier: m.freeTier, dependsOn: m.dependsOn, addonMonthlyPaise: ADDON_MONTHLY_PAISE[m.key] ?? null })),
-    extraUserMonthlyPaise: EXTRA_USER_MONTHLY_PAISE,
+    plans: catalog.plans.filter((p) => p.isPublic).map(({ isPublic: _, ...p }) => p),
+    modules: catalog.modules,
+    extraUserMonthlyPaise: catalog.extraUserMonthlyPaise,
     currency: 'INR',
   });
 });

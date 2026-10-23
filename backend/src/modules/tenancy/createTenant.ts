@@ -1,15 +1,31 @@
-import type { TenantSource } from '@prisma/client';
-import { env } from '../../config/env';
+import type { AcquiredByType, AcquisitionMethod, TenantSource } from '@prisma/client';
 import { db } from '../../kernel/db';
 import { AppError } from '../../kernel/errors';
 import { pepperedHash } from '../../kernel/crypto';
 import { templateByKey } from '../../contracts/templates';
-import { TRIAL_PLAN_KEY } from '../../contracts/plans';
 import { persistEntitlements } from '../subscription/entitlements';
 import { publish } from '../events/outbox';
 import { audit } from '../audit/service';
+import { getSetting } from '../settings/service';
 
-// ONB-01: every channel (self-signup, vendor link/code, Super Admin, partner) calls this one service.
+// ONB-01: every channel (self-signup, vendor link/code, sales team, partner) calls this one service.
+
+/** Who brought the tenant in (design v2 §11). Locked at creation; tenants never see it. */
+export interface AcquisitionInput {
+  byType: AcquiredByType;
+  byUserId?: string;
+  method: AcquisitionMethod;
+  referralCode?: string;
+  couponCode?: string;
+}
+
+const SOURCE_BY_ACQUIRER: Record<AcquiredByType, TenantSource> = { self: 'direct', vendor: 'vendor', sales_user: 'sales', partner_user: 'partner' };
+
+export function validateAcquisition(a: AcquisitionInput) {
+  if (a.byType === 'self' && a.byUserId) throw new AppError('VALIDATION_FAILED', 'A self-signup has no acquiring user.', { fields: { byUserId: 'Must be empty for self-signup' } });
+  if (a.byType !== 'self' && !a.byUserId) throw new AppError('VALIDATION_FAILED', 'Who brought this client in is required.', { fields: { byUserId: 'Required' } });
+  return SOURCE_BY_ACQUIRER[a.byType];
+}
 
 export interface CreateTenantInput {
   owner:
@@ -17,13 +33,16 @@ export interface CreateTenantInput {
     | { kind: 'existing'; userId: string };
   businessName: string;
   industryKey: string;
-  source: TenantSource;
+  /** Defaults to a self-signup */
+  acquisition?: AcquisitionInput;
   partnerId?: string;
+  /** AHEAD's own workspace (uses its own CRM to sell) */
+  isInternal?: boolean;
   gstin?: string;
 }
 
 /** End of the trial's last day in IST (e.g. 2026-11-06T18:29:59Z). */
-export function trialEnd(from: Date, days = env.TRIAL_DAYS) {
+export function trialEnd(from: Date, days: number) {
   const IST_OFFSET = 330 * 60 * 1000;
   const ist = new Date(from.getTime() + IST_OFFSET + days * 86_400_000);
   ist.setUTCHours(23, 59, 59, 0);
@@ -35,6 +54,10 @@ export async function createTenant(input: CreateTenantInput) {
   const tx = db();
   const template = templateByKey(input.industryKey);
   if (!template) throw new AppError('VALIDATION_FAILED', 'Unknown industry.', { fields: { industryKey: 'Unknown industry' } });
+  const acquisition: AcquisitionInput = input.acquisition ?? { byType: 'self', method: 'signup' };
+  const source = validateAcquisition(acquisition);
+  // Assisted, paid-up-front onboarding (no trial) arrives with the Console in Step 4
+  const onboardingType = 'trial' as const;
 
   // Resolve owner identity
   let user;
@@ -60,7 +83,7 @@ export async function createTenant(input: CreateTenantInput) {
   const mobileHash = pepperedHash(user.mobile);
   const emailHash = pepperedHash(user.email);
   const gstin = input.gstin?.toUpperCase();
-  if (input.source === 'direct' || input.source === 'vendor') {
+  if (onboardingType === 'trial' && !input.isInternal) {
     const dup = await tx.trialRegistry.findFirst({
       where: { OR: [{ mobileHash }, { emailHash }, ...(gstin ? [{ gstin }] : [])] },
     });
@@ -74,7 +97,9 @@ export async function createTenant(input: CreateTenantInput) {
       industryKey: template.key,
       templateVersion: template.version,
       status: 'trialing',
-      source: input.source,
+      source,
+      onboardingType,
+      isInternal: !!input.isInternal,
       partnerId: input.partnerId,
       billingOwner: input.partnerId ? 'partner' : 'self',
       gstin,
@@ -84,9 +109,17 @@ export async function createTenant(input: CreateTenantInput) {
 
   const branch = await tx.branch.create({ data: { tenantId: tenant.id, name: 'Main Branch', code: 'MAIN', isDefault: true } });
 
-  const trialPlan = await tx.plan.findUniqueOrThrow({ where: { key: TRIAL_PLAN_KEY } });
+  await tx.tenantAcquisition.create({
+    data: {
+      tenantId: tenant.id, acquiredByType: acquisition.byType, acquiredByUserId: acquisition.byUserId ?? null, method: acquisition.method,
+      referralCode: acquisition.referralCode, couponCode: acquisition.couponCode?.toUpperCase(), lockedAt: now,
+    },
+  });
+
+  const [trialPlanKey, trialDays] = await Promise.all([getSetting('trial.plan_key'), getSetting('trial.days')]);
+  const trialPlan = await tx.plan.findUniqueOrThrow({ where: { key: trialPlanKey } });
   const subscription = await tx.subscription.create({
-    data: { tenantId: tenant.id, planId: trialPlan.id, status: 'trialing', trialEndsAt: trialEnd(now) },
+    data: { tenantId: tenant.id, planId: trialPlan.id, status: 'trialing', trialEndsAt: trialEnd(now, trialDays) },
   });
 
   const ownerRole = await tx.role.findFirstOrThrow({ where: { tenantId: null, key: 'owner' } });
@@ -94,16 +127,16 @@ export async function createTenant(input: CreateTenantInput) {
     data: { tenantId: tenant.id, userId: user.id, roleId: ownerRole.id, status: 'active', joinedAt: now },
   });
 
-  await tx.trialRegistry.create({ data: { tenantId: tenant.id, mobileHash, emailHash, gstin } });
+  if (onboardingType === 'trial' && !input.isInternal) await tx.trialRegistry.create({ data: { tenantId: tenant.id, mobileHash, emailHash, gstin } });
   await tx.user.update({ where: { id: user.id }, data: { lastTenantId: tenant.id } });
   await persistEntitlements(tenant.id);
 
   await publish(
     'tenant.created',
-    { tenantId: tenant.id, source: input.source, partnerId: input.partnerId ?? null, industryKey: template.key, ownerUserId: user.id },
+    { tenantId: tenant.id, source, onboardingType, partnerId: input.partnerId ?? null, industryKey: template.key, ownerUserId: user.id },
     { tenantId: tenant.id },
   );
-  await audit({ tenantId: tenant.id, actorId: user.id, action: 'tenant.created', entity: 'tenant', entityId: tenant.id, after: { name: tenant.name, source: input.source } });
+  await audit({ tenantId: tenant.id, actorId: user.id, action: 'tenant.created', entity: 'tenant', entityId: tenant.id, after: { name: tenant.name, source, onboardingType } });
 
   return { user, tenant, branch, subscription, ownerRoleId: ownerRole.id };
 }

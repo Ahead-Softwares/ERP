@@ -130,8 +130,47 @@ Exit gate: a tenant can sign up, configure, and issue a GST invoice.
 - [ ] Latency: every query round-trips to Neon us-east-2; signup takes ~8 s and the dashboard ~15–20 s from India. Host the API in the same region as the database (or move the Neon project closer) and batch the /me queries.
 - [ ] Rotate the Neon database password (it was shared in chat) and keep it only in backend/.env.
 
+## Platform v2 — Console + ERP (design v2, 2026-10-23)
+Design: `Platform design - Multi level flow, super admin, verder, partner.docx` (v2; v1 kept as `... (v1 backup 22 Oct).docx`). One app, two workspaces: **Console** (`/console`, AHEAD team) and **Business ERP** (`/app`, tenants). Partner white-label and vendor payouts move to "Later". Each step starts only when the previous step's tests are green.
+
+### Step 1 — Data model and settings (R1, R2, R4) — done 2026-10-23
+- [x] R1: `tenant_source` `admin` → `sales`; `tenants.onboarding_type` (trial / direct_paid) + `is_internal`
+- [x] R1: `tenant_acquisitions` (platform table, never visible to tenants): who brought the tenant in, method, referral/coupon code, locked at signup; existing tenants backfilled as self-signup
+- [x] R1: `createTenant()` takes an acquisition (default self-signup) and derives `source`; trial registry only for trial, non-internal tenants; signup records the coupon code
+- [x] R1: `changeAcquisition()` for the Super Admin — reason required, updates `source`, audited (screen comes in Step 3)
+- [x] R2: `config_values` table + definitions in `contracts/settings.ts` + `getSetting / setSetting / resetSetting / listSettings` (validated, versioned, audited, 60 s cache; an invalid stored value falls back to the default)
+- [x] R2: trial days, trial plan, trial limits and grace days (monthly/yearly) moved from `.env` / constants to settings
+- [x] R4: seed no longer overwrites plans, plan modules, prices or free-tier flags (`syncCatalog`); `npm run db:seed -- --reset-commercials` restores the code defaults in dev
+- [x] R4: runtime reads the commercial catalogue from the DB (`getCatalog`): `/billing/plans`, Free limits, free-tier modules
+- [x] Tests (30/30 green): seed keeps DB edits, reset restores defaults, settings fallback/validation/versioning, acquisition rules and lock, internal tenant, new platform tables closed to `app_user`
+- Note: `direct_paid` is stored but not used yet — the `incomplete` subscription state arrives in Step 4
+
+### Step 2 — R3-lite: Console workspace
+- [ ] `platform_members` (user, Console role, team, reports_to); Console roles: Super Admin, Operations/Support, Finance, Sales Manager, Sales Executive, Vendor
+- [ ] Token carries the workspace (`ws = console | tenant:<id>`); `requirePlatformPermission` with scope all / team / own
+- [ ] Super Admin bootstrap script; workspace switcher; empty `/console` shell
+- [ ] Tests: tenant users get 403 on Console routes; Console users cannot read tenant business data; RLS suite green
+
+### Step 3 — Console screens
+- [ ] Dashboard (clients, trials ending, active / past_due, MRR); Clients list + detail (plan, entitlements, usage, acquisition)
+- [ ] Plans / modules / prices / coupons editor (calls `invalidateCatalog()`); discount limit per role
+- [ ] Settings screen (`listSettings / setSetting`), grace periods, Console users & roles, audit log, announcements
+
+### Step 4 — Assisted onboarding + platform billing (R5–R7)
+- [ ] New client from the Console (sales/vendor acquisition), `incomplete` subscription state, discount approval
+- [ ] Razorpay payment link + signed, idempotent webhook; offline payment; AHEAD GST invoice (number on capture); credit notes
+- [ ] Renewal + dunning job, trial reminder job (notification_log de-dup), 14-day auto-cancel
+
+### Step 5 — Support and reports
+- [ ] Support access with tenant consent (time-limited "Login as", banner, audit)
+- [ ] Vendor / salesperson commission report (manual payout)
+
+### Later (design v2 §13)
+- [ ] White-label partner (panel, domains, price book, monthly billing), vendor KYC + payouts, full theming, dedicated-DB tier, visual workflow builder
+
 ## Phase 2 — Operations (weeks 5–8)
 Exit gate: stock and accounts update from sales and purchases.
+Can run in parallel once Platform v2 Step 2 is merged. From the Maglo reference, add: reporting manager + teams, permission matrix UI, Contact vs Lead (re-enquiry count), configurable pipeline stages, round-robin assignment, follow-up screen, quotation statuses + proforma, one shared list-page component.
 - [ ] Sales orders, approvals, delivery challan, returns + credit notes (SAL-02..05)
 - [ ] Billing advanced: dues & ageing, recurring billing, POS counter screen, tenant Razorpay links, reminders (BIL-05..09)
 - [ ] Inventory: stock ledger, warehouses, GRN/dispatch, transfers/adjustments with approval, batch/serial/expiry + FEFO, reorder alerts, valuation (INV-01..07, 09)
@@ -143,16 +182,16 @@ Exit gate: stock and accounts update from sales and purchases.
 
 ## Phase 3 — Growth + intelligence (weeks 9–11)
 Exit gate: paid checkout, vendor commission and partner billing work end to end.
-- [ ] Platform billing: checkout preview (proration, GST, dependencies), Razorpay order/mandate, webhook (HMAC, idempotent), platform invoice numbering, PDF, dunning, renewal job, downgrade at period end, cancel auto-renew, offline payments (PAY-01..12)
+- [ ] Platform billing (payment links, webhook, platform invoices, offline payments and renewals move up to Platform v2 Step 4): checkout preview (proration, GST, dependencies), Razorpay order/mandate, webhook (HMAC, idempotent), platform invoice numbering, PDF, dunning, renewal job, downgrade at period end, cancel auto-renew, offline payments (PAY-01..12)
 - [ ] Customer Service: tickets, SLA, complaints/warranty (SUP-01..03)
 - [ ] Reports & Analytics: standard reports + export, dashboard builder, report builder (RPT-02..06)
 - [ ] AI Business Assistant (Python FastAPI): permission-checked tools, code-computed totals, briefing, drafts, credit metering + hard limit (AI-01..09)
 - [ ] Automation & Notifications: ready-made automations, rule builder, SMS/WhatsApp provider, run-time entitlement checks (AUT-02..06)
 - [ ] Tasks advanced: recurring, templates, multi-step approvals (TSK-03..05)
 - [ ] Bookings advanced: resources, public booking page, classes, memberships, reminders (BKG-03..07)
-- [ ] Vendor program: registration with OTP, KYC upload (encrypted), approval queue, referral link/code, attribution lock, commissions pending→approved→paid, payouts (VND-01..09)
-- [ ] White-label partners: branding, subdomain/custom domain, partner panel, partner billing snapshot (WL-01..06)
-- [ ] Super Admin console: tenants, assisted onboarding, vendor queue, payouts, plans/prices/coupons, offline payments, failed jobs (ADM-01..08)
+- [ ] Vendor program — moved: v1 is a Console role + referral code (Platform v2 Steps 2 and 5); KYC and payouts under "Later" (VND-01..09)
+- [ ] White-label partners — moved to Platform v2 "Later" (WL-01..06)
+- [ ] Super Admin console — moved to Platform v2 Steps 2–5 (ADM-01..08)
 - [ ] Replace in-process poller with Redis + BullMQ; Redis caches
 
 ## Phase 4 — Hardware + hardening (weeks 12–13)

@@ -10,9 +10,6 @@ const EnvSchema = z.object({
   JWT_SECRET: z.string().min(32),
   PEPPER: z.string().min(16),
   APP_URL: z.string().url().default('http://localhost:3000'),
-  TRIAL_DAYS: z.coerce.number().int().positive().default(15),
-  GRACE_DAYS_MONTHLY: z.coerce.number().int().positive().default(7),
-  GRACE_DAYS_YEARLY: z.coerce.number().int().positive().default(14),
   RUN_WORKER: z
     .string()
     .default('true')
