@@ -386,6 +386,30 @@ model PlatformMember {
   @@map("platform_members")
 }
 
+/// What a Console extension changed: the trial end (trialing) or the payment grace end (past_due)
+enum ExtensionKind {
+  trial
+  grace
+
+  @@map("extension_kind")
+}
+
+/// Platform table: extra days given from the Console (design v2 §3), always with a reason.
+model GracePeriod {
+  id            String        @id @default(uuid(7)) @db.Uuid
+  tenantId      String        @map("tenant_id") @db.Uuid
+  kind          ExtensionKind
+  days          Int
+  reason        String
+  previousEndAt DateTime?     @map("previous_end_at") @db.Timestamptz
+  newEndAt      DateTime      @map("new_end_at") @db.Timestamptz
+  grantedBy     String        @map("granted_by") @db.Uuid
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([tenantId, createdAt])
+  @@map("grace_periods")
+}
+
 /// Platform table (no RLS, never visible to tenants): who brought the tenant in.
 /// Written once by createTenant() and locked; only a Super Admin may change it, with a reason.
 model TenantAcquisition {

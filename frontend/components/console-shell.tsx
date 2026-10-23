@@ -10,7 +10,7 @@ import { useAuth } from "@/lib/auth"
 import { cn } from "@/lib/utils"
 
 // design v2: the AHEAD team's Console. Items show only for roles that have the permission;
-// screens marked "Soon" arrive in Step 3–4.
+// screens marked "Soon" arrive in Step 4 (payments).
 interface ConsoleNav {
   href: string
   label: string
@@ -21,12 +21,12 @@ interface ConsoleNav {
 
 const CONSOLE_NAV: ConsoleNav[] = [
   { href: "/console", label: "Dashboard", icon: LayoutDashboard, permission: "platform.dashboard.view", ready: true },
-  { href: "/console/clients", label: "Clients", icon: Building2, permission: "platform.tenant.view", ready: false },
-  { href: "/console/plans", label: "Plans & prices", icon: Tags, permission: "platform.plan.view", ready: false },
+  { href: "/console/clients", label: "Clients", icon: Building2, permission: "platform.tenant.view", ready: true },
+  { href: "/console/plans", label: "Plans & prices", icon: Tags, permission: "platform.plan.view", ready: true },
   { href: "/console/payments", label: "Payments", icon: CreditCard, permission: "platform.payment.view", ready: false },
-  { href: "/console/team", label: "Console users", icon: Users, permission: "platform.member.view", ready: false },
-  { href: "/console/settings", label: "Settings", icon: Settings2, permission: "platform.setting.view", ready: false },
-  { href: "/console/audit", label: "Audit log", icon: ScrollText, permission: "platform.audit.view", ready: false },
+  { href: "/console/team", label: "Console users", icon: Users, permission: "platform.member.view", ready: true },
+  { href: "/console/settings", label: "Settings", icon: Settings2, permission: "platform.setting.view", ready: true },
+  { href: "/console/audit", label: "Audit log", icon: ScrollText, permission: "platform.audit.view", ready: true },
 ]
 
 function ConsoleSidebar({ onNavigate }: { onNavigate?: () => void }) {
@@ -36,7 +36,7 @@ function ConsoleSidebar({ onNavigate }: { onNavigate?: () => void }) {
     <nav className="flex h-full flex-col gap-1 overflow-y-auto p-3" aria-label="Console">
       {CONSOLE_NAV.filter((item) => canConsole(item.permission)).map((item) =>
         item.ready ? (
-          <NavLink key={item.href} href={item.href} active={pathname === item.href} onClick={onNavigate}>
+          <NavLink key={item.href} href={item.href} active={item.href === "/console" ? pathname === item.href : pathname.startsWith(item.href)} onClick={onNavigate}>
             <item.icon className="size-4" /> {item.label}
           </NavLink>
         ) : (

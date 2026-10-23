@@ -29,6 +29,16 @@ export const SETTINGS = {
   'trial.limits': def({ description: 'Usage limits during the trial', schema: PlanLimitsSchema, default: TRIAL_LIMITS }),
   'grace.days_monthly': def({ description: 'Grace days after a failed monthly renewal', schema: z.number().int().min(0).max(60), default: 7 }),
   'grace.days_yearly': def({ description: 'Grace days after a failed yearly renewal', schema: z.number().int().min(0).max(90), default: 14 }),
+  'sales.discount_limits': def({
+    description: 'Highest discount (%) each Console role may give without Super Admin approval',
+    schema: z.record(z.string(), z.number().min(0).max(100)),
+    default: { console_sales_executive: 10, console_sales_manager: 20, vendor: 0 } as Record<string, number>,
+  }),
+  'announcement.banner': def({
+    description: 'One line shown on top of every client workspace (empty = none)',
+    schema: z.object({ text: z.string().trim().max(200), tone: z.enum(['info', 'warning']), until: z.string().datetime().nullable() }).nullable(),
+    default: null as { text: string; tone: 'info' | 'warning'; until: string | null } | null,
+  }),
 };
 
 export type SettingKey = keyof typeof SETTINGS;

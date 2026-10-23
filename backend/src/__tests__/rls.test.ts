@@ -5,7 +5,7 @@ import { prisma, withTenant, db } from '../kernel/db';
 // Requires DATABASE_URL and at least two tenants (run the signup smoke test first).
 
 // Platform tables that carry tenant_id but are only reachable with platform privileges
-const PLATFORM_TABLES = ['trial_registry', 'user_sessions', 'tenant_acquisitions'];
+const PLATFORM_TABLES = ['trial_registry', 'user_sessions', 'tenant_acquisitions', 'grace_periods'];
 
 describe('row-level security', () => {
   afterAll(() => prisma.$disconnect());

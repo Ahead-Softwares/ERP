@@ -8,6 +8,7 @@ import { effectivePermissions, getFieldAccess, getMember } from '../access/servi
 import { getTerms } from '../config/service';
 import { audit } from '../audit/service';
 import { consoleAccess } from '../console/service';
+import { getSetting } from '../settings/service';
 import { sendMessage } from '../notifications/service';
 import { signPurposeToken, startSession } from './tokens';
 
@@ -80,13 +81,15 @@ export async function setPassword(userId: string, password: string) {
 /** GET /me — everything the frontend needs to render the app for the current workspace. */
 export async function buildMe(userId: string, tenantId: string | null, workspace: 'tenant' | 'console' = 'tenant') {
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
-  const [memberships, consoleInfo] = await Promise.all([
+  const [memberships, consoleInfo, banner] = await Promise.all([
     prisma.tenantMember.findMany({
       where: { userId, status: 'active', tenant: { status: { not: 'purged' } } },
       include: { tenant: { select: { id: true, name: true, status: true, logoUrl: true } }, role: { select: { name: true } } },
     }),
     consoleAccess(userId),
+    getSetting('announcement.banner'),
   ]);
+  const announcement = banner?.text && (!banner.until || new Date(banner.until) > new Date()) ? { text: banner.text, tone: banner.tone } : null;
 
   const base = {
     workspace: workspace === 'console' && consoleInfo ? ('console' as const) : ('tenant' as const),
@@ -97,6 +100,8 @@ export async function buildMe(userId: string, tenantId: string | null, workspace
     memberships: memberships.map((m) => ({ tenantId: m.tenantId, name: m.tenant.name, status: m.tenant.status, logoUrl: m.tenant.logoUrl, roleName: m.role.name })),
     /** Present only for AHEAD team members; drives the workspace switcher */
     console: consoleInfo,
+    /** Platform-wide banner set from the Console */
+    announcement,
   };
   if (!tenantId || base.workspace === 'console') return { ...base, tenant: null };
 

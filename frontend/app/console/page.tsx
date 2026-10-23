@@ -55,7 +55,7 @@ export default function ConsoleDashboardPage() {
         <CardHeader>
           <CardTitle>Coming next</CardTitle>
           <CardDescription>
-            Client list and detail, plans &amp; prices, settings, Console users and the audit log arrive in the next step. Until then, Console users are added with
+            Payments, AHEAD invoices and assisted onboarding arrive in the next step. The first Super Admin is added with
             <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">npm run console:member</code>
             in the backend.
           </CardDescription>

@@ -18,17 +18,25 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
   const ready = status === "authenticated" && me?.workspace === "console"
   // Once the Console has been shown, a tenant session means the user switched away: never switch back
   const wasReady = React.useRef(false)
+  const switching = React.useRef(false)
 
   React.useEffect(() => {
     if (ready) wasReady.current = true
     if (status === "anonymous") router.replace("/login")
     if (status !== "authenticated" || !me || me.workspace === "console") return
-    // Opened /console from a business session: AHEAD team members switch, everyone else goes back
-    if (me.console && !wasReady.current) switchToConsole().catch((e) => {
-      toast.error(errorMessage(e))
-      router.replace("/app")
-    })
-    else router.replace("/app")
+    // Opened /console from a business session: AHEAD team members switch (once), everyone else goes back
+    if (me.console && !wasReady.current) {
+      if (switching.current) return
+      switching.current = true
+      switchToConsole()
+        .catch((e) => {
+          toast.error(errorMessage(e))
+          router.replace("/app")
+        })
+        .finally(() => {
+          switching.current = false
+        })
+    } else router.replace("/app")
   }, [ready, status, me, switchToConsole, router])
 
   if (!ready) {

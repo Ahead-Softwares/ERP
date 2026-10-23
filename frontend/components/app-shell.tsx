@@ -226,6 +226,11 @@ function Banners() {
   const sub = me.subscription
   return (
     <div className="grid gap-px">
+      {me.announcement && (
+        <div className={cn("px-4 py-2 text-center text-sm", me.announcement.tone === "warning" ? "bg-amber-500 text-amber-950" : "bg-foreground text-background")} role="status">
+          {me.announcement.text}
+        </div>
+      )}
       {sub?.status === "trialing" && sub.daysLeft !== null && sub.daysLeft <= 7 && (
         <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 bg-primary px-4 py-2 text-center text-sm text-primary-foreground">
           <span>

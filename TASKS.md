@@ -157,10 +157,16 @@ Design: `Platform design - Multi level flow, super admin, verder, partner.docx` 
 - [x] Tests (38/38 green): role separation, route guards, old-token default, tenant token refused by Console, team/own/all scope; checked in the browser (switch in and out) and via API (login → Console → refresh → logout)
 - Dev data: test Super Admin `console-admin@example.test` (mobile `+919000000011`, OTP login)
 
-### Step 3 — Console screens
-- [ ] Dashboard (clients, trials ending, active / past_due, MRR); Clients list + detail (plan, entitlements, usage, acquisition)
-- [ ] Plans / modules / prices / coupons editor (calls `invalidateCatalog()`); discount limit per role
-- [ ] Settings screen (`listSettings / setSetting`), grace periods, Console users & roles, audit log, announcements
+### Step 3 — Console screens — done 2026-10-23
+- [x] Clients list (search by name/GSTIN, status filter, plan, source, users) and detail (subscription, owner, source, usage counts, modules, history) — account metadata only, scoped own / team / all; out-of-scope ids return 404
+- [x] Extra days: extend a trial (trialing) or payment grace (past_due), 1–30 days with a reason; `grace_periods` table + audit
+- [x] Change who brought a client in (reason required) from the detail screen
+- [x] Plans & prices: edit plan name, tagline, visibility, limits and modules (re-computes entitlements of clients on that plan); versioned price edits; coupons (create, end now)
+- [x] Settings screen: trial days/plan/limits, grace days, discount limit per role (`sales.discount_limits`), announcement banner (`announcement.banner`, shown on top of every client workspace via `/me`)
+- [x] Console users: add (existing account by email, or new with name + mobile), change role and manager, deactivate/reactivate; roles overview. Rules: only a Super Admin grants or changes Super Admin, nobody edits their own role/status, the last Super Admin stays, no reporting loops
+- [x] Platform audit log screen (tenant_id null entries) with filters
+- [x] Tests (46/46 green): extensions, scope 404, versioned prices, plan module validation, coupons, Console-user rules; screens checked in the browser
+- Not yet: MRR on the dashboard and payments screens (need Step 4); free-tier flags per module are not editable from the UI yet
 
 ### Step 4 — Assisted onboarding + platform billing (R5–R7)
 - [ ] New client from the Console (sales/vendor acquisition), `incomplete` subscription state, discount approval
