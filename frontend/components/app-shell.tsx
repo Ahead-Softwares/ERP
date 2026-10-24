@@ -43,7 +43,8 @@ export function NavLink({ href, active, children, onClick }: { href: string; act
 function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname()
   const { me, canView, can, term } = useAuth()
-  const recommended = me?.tenant?.onboarding?.recommendedModules ?? []
+  // Owner's picks at signup first, then the industry template's order
+  const recommended = [...new Set([...(me?.tenant?.preferredModules ?? []), ...(me?.tenant?.onboarding?.recommendedModules ?? [])])]
   const ordered = [...MODULE_NAV].sort((a, b) => {
     const ia = recommended.indexOf(a.key)
     const ib = recommended.indexOf(b.key)

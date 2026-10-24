@@ -1,10 +1,11 @@
 "use client"
 
 import * as React from "react"
-import { useRouter } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { CloudOff, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { AppShell } from "@/components/app-shell"
+import { WorkspaceBranding } from "@/components/workspace-branding"
 import { useAuth } from "@/lib/auth"
 
 function FullScreen({ children }: { children: React.ReactNode }) {
@@ -13,7 +14,7 @@ function FullScreen({ children }: { children: React.ReactNode }) {
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
-  const { status, me, reload, retry, switchToConsole } = useAuth()
+  const { status, me, retry, switchToConsole } = useAuth()
   const [retrying, setRetrying] = React.useState(false)
 
   const inConsole = status === "authenticated" && me?.workspace === "console"
@@ -22,13 +23,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     if (inConsole) router.replace("/console")
   }, [status, inConsole, router])
 
-  // LLD §11.1: the template is applied asynchronously right after signup
-  const settingUp = status === "authenticated" && me?.tenant && !me.tenant.configApplied
+  // LLD §11.1: the template is applied asynchronously right after signup — the loading
+  // screen (/app/welcome) shows its real progress. Welcome and setup are full-screen.
+  const pathname = usePathname()
+  const fullScreen = pathname.startsWith("/app/welcome") || pathname.startsWith("/app/setup")
+  const settingUp = status === "authenticated" && !!me?.tenant && !me.tenant.configApplied && !pathname.startsWith("/app/welcome")
   React.useEffect(() => {
-    if (!settingUp) return
-    const t = setInterval(() => void reload(), 1500)
-    return () => clearInterval(t)
-  }, [settingUp, reload])
+    if (settingUp) router.replace("/app/welcome")
+  }, [settingUp, router])
 
   if (status === "unavailable") {
     return (
@@ -77,12 +79,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   if (settingUp) {
     return (
       <FullScreen>
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="size-5 animate-spin" />
-          <p>Setting up your workspace…</p>
-        </div>
+        <Loader2 className="size-5 animate-spin" aria-label="Loading" />
       </FullScreen>
     )
   }
-  return <AppShell>{children}</AppShell>
+  return (
+    <>
+      <WorkspaceBranding />
+      {fullScreen ? children : <AppShell>{children}</AppShell>}
+    </>
+  )
 }

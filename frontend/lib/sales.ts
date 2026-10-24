@@ -34,6 +34,12 @@ export interface Seller {
   stateCode?: string | null
   address?: Record<string, string> | null
   logoUrl?: string | null
+  phone?: string | null
+  email?: string | null
+  /** Frozen at issue from Settings › Payments */
+  bank?: { holder: string; account: string; ifsc: string } | null
+  upiId?: string | null
+  showUpiQr?: boolean
 }
 
 export interface SalesDoc {

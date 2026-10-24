@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { TRIAL_LIMITS, TRIAL_PLAN_KEY } from './plans';
+import { gstin as gstinRule, gstinStateMismatch, sac as sacRule, stateName, upperNoSpaces } from './validation';
 
 // Platform settings (design v2 §9): the definition lives in code, the value in `config_values`.
 // A missing or invalid stored value falls back to the default here, so a bad row can never
@@ -38,11 +39,14 @@ export const SETTINGS = {
     description: "AHEAD's own details printed on invoices to clients (SAC and GST rate: confirm with the CA)",
     schema: z.object({
       legalName: z.string().trim().max(120),
-      gstin: z.string().trim().max(15),
-      stateCode: z.string().regex(/^(\d{2})?$/, 'Two-digit GST state code'),
+      gstin: z.string().transform(upperNoSpaces).refine((v) => v === '' || !gstinRule(v), (v) => ({ message: gstinRule(v) ?? '' })),
+      stateCode: z.string().refine((v) => v === '' || stateName(v) !== null, 'Choose a state from the list'),
       address: z.string().trim().max(300),
-      sac: z.string().trim().max(8),
+      sac: z.string().trim().refine((v) => !sacRule(v), 'SAC has 6 digits and starts with 99'),
       gstRateBp: z.number().int().min(0).max(2800),
+    }).superRefine((v, c) => {
+      const mismatch = gstinStateMismatch(v.gstin, v.stateCode);
+      if (mismatch) c.addIssue({ code: z.ZodIssueCode.custom, path: ['gstin'], message: mismatch });
     }),
     default: { legalName: 'AHEAD Software', gstin: '', stateCode: '', address: '', sac: '998314', gstRateBp: 1800 },
   }),

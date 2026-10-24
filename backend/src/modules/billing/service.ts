@@ -10,30 +10,37 @@ import { DateStr, Paise, consumeMonthly, inScope, markOnboarding } from '../../k
 import { getEntitlements } from '../subscription/entitlements';
 import { validateCustom } from '../config/service';
 import { audit } from '../audit/service';
+import { optionalText, zEmail, zGstin, zHsnOrSac, zPhone, zStateCode } from '../../kernel/zodRules';
+import { gstinStateMismatch } from '../../contracts/validation';
+import { withDefaults, type WorkspaceProfile } from '../../contracts/workspace';
 
 // Sales documents: quotations (SAL-01) and GST tax invoices (BIL-01..04) share one engine.
 
-const GSTIN = /^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 export const SCOPE_FIELDS = { owner: ['createdBy'], branch: 'branchId' };
 
 export const LineInput = z.object({
   itemId: z.string().uuid().optional().nullable(),
   description: z.string().trim().max(300).optional(),
-  hsnSac: z.string().trim().regex(/^\d{4,8}$/, 'HSN/SAC is 4–8 digits').optional().nullable().or(z.literal('').transform(() => null)),
+  hsnSac: optionalText(zHsnOrSac),
   unit: z.string().trim().max(20).optional(),
-  quantity: z.number().positive().max(1e7),
+  quantity: z.number().positive('Quantity must be more than 0').max(1e7),
   unitPricePaise: Paise,
   discountPaise: Paise.default(0),
   gstRateBp: z.number().int().refine((v) => (GST_RATES_BP as readonly number[]).includes(v), 'Choose a valid GST rate'),
+}).superRefine((l, c) => {
+  if (l.discountPaise > Math.round(l.quantity * l.unitPricePaise)) c.addIssue({ code: z.ZodIssueCode.custom, path: ['discountPaise'], message: "Discount can't be more than the line amount" });
 });
 
 export const BuyerInput = z.object({
-  name: z.string().trim().min(1).max(160),
-  gstin: z.string().trim().toUpperCase().regex(GSTIN, 'Enter a valid GSTIN').optional().nullable().or(z.literal('').transform(() => null)),
-  phone: z.string().trim().max(20).optional().nullable(),
-  email: z.string().trim().max(200).optional().nullable(),
-  stateCode: z.string().regex(/^\d{2}$/).optional().nullable(),
+  name: z.string().trim().min(1, 'Customer name is required').max(160),
+  gstin: optionalText(zGstin),
+  phone: optionalText(zPhone),
+  email: optionalText(zEmail),
+  stateCode: zStateCode.optional().nullable(),
   address: z.record(z.string()).optional().nullable(),
+}).superRefine((b, c) => {
+  const mismatch = gstinStateMismatch(b.gstin, b.stateCode);
+  if (mismatch) c.addIssue({ code: z.ZodIssueCode.custom, path: ['gstin'], message: mismatch });
 });
 
 export const DocInput = z.object({
@@ -137,6 +144,8 @@ export async function getDocument(ctx: TenantCtx, id: string, kind: SalesDocKind
 
 export async function createDocument(ctx: TenantCtx, kind: SalesDocKind, input: DocInput, opts: { issue?: boolean; sourceType?: string; sourceId?: string } = {}) {
   const { tenant, doc, lines } = await prepare(ctx, input);
+  // Default terms from Settings › Documents when the document has none
+  if (!doc.terms) doc.terms = withDefaults(tenant.preferences).documents.terms || null;
   // Quotations are numbered when created; invoices only when issued (never burn numbers on drafts)
   const numbered = kind === 'quotation' ? await allocateNumber(ctx.tenantId, 'quotation', tenant.fyStartMonth) : null;
   const created = await db().salesDocument.create({
@@ -190,9 +199,16 @@ export async function issueInvoice(ctx: TenantCtx, id: string) {
   await consumeMonthly(ctx, 'invoices', ent.limits.invoicesPerMonth, 'invoices');
   const { number, fy } = await allocateNumber(ctx.tenantId, 'invoice', tenant.fyStartMonth, doc.issueDate);
   const branch = doc.branchId ? await db().branch.findUnique({ where: { id: doc.branchId } }) : null;
+  const prefs = withDefaults(tenant.preferences);
+  const profile = (tenant.profile ?? {}) as WorkspaceProfile;
+  const pay = prefs.payments;
   const seller = {
     name: tenant.name, legalName: tenant.legalName, gstin: branch?.gstin ?? tenant.gstin,
     stateCode: branch?.stateCode ?? tenant.billingStateCode, address: branch?.address ?? tenant.address, logoUrl: tenant.logoUrl,
+    phone: profile.phone ?? null, email: profile.email ?? null, brandColor: prefs.branding.brandColor,
+    // Frozen with the invoice, so later bank changes never alter an issued invoice
+    bank: pay.bankAccount ? { holder: pay.bankHolder, account: pay.bankAccount, ifsc: pay.ifsc } : null,
+    upiId: pay.upiId || null, showUpiQr: pay.showUpiQr && !!pay.upiId,
   };
   await db().salesDocumentLine.deleteMany({ where: { documentId: id } });
   await db().salesDocument.update({

@@ -9,6 +9,7 @@ import { IdParam, ListQuery, Paise, assertRecordLimit, assertVersion, canWriteFi
 import { validate } from '../../middleware/request';
 import { requirePermission, tenantAuth, tx } from '../../middleware/auth';
 import { validateCustom } from '../config/service';
+import { optionalText, zHsnOrSac } from '../../kernel/zodRules';
 import { consumer } from '../events/outbox';
 import { audit } from '../audit/service';
 import { templateByKey } from '../../contracts/templates';
@@ -29,7 +30,7 @@ const ItemInput = z.object({
   pricePaise: Paise,
   costPricePaise: Paise.optional().nullable(),
   gstRateBp: z.number().int().refine((v) => (GST_RATES_BP as readonly number[]).includes(v), 'Choose a valid GST rate'),
-  hsnSac: z.string().trim().regex(/^\d{4,8}$/, 'HSN/SAC is 4–8 digits').optional().nullable().or(z.literal('').transform(() => null)),
+  hsnSac: optionalText(zHsnOrSac),
   durationMin: z.number().int().min(5).max(24 * 60).optional().nullable(),
   skill: z.string().trim().max(80).optional().nullable(),
   description: z.string().trim().max(2000).optional().nullable(),

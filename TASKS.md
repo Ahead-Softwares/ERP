@@ -129,6 +129,7 @@ Exit gate: a tenant can sign up, configure, and issue a GST invoice.
 ### Known issues
 - [ ] Latency: every query round-trips to Neon us-east-2; signup takes ~8 s and the dashboard ~15–20 s from India. Host the API in the same region as the database (or move the Neon project closer) and batch the /me queries.
 - [ ] Rotate the Neon database password (it was shared in chat) and keep it only in backend/.env.
+- [ ] `npm audit` (2026-10-24): next 16.4.0 has critical advisories (fixed in 16.4.3) and body-parser 2.0–2.3 a high one — upgrade both before go-live
 
 ## Platform v2 — Console + ERP (design v2, 2026-10-23)
 Design: `Platform design - Multi level flow, super admin, verder, partner.docx` (v2; v1 kept as `... (v1 backup 22 Oct).docx`). One app, two workspaces: **Console** (`/console`, AHEAD team) and **Business ERP** (`/app`, tenants). Partner white-label and vendor payouts move to "Later". Each step starts only when the previous step's tests are green.
@@ -203,6 +204,118 @@ Design: `Platform design - Multi level flow, super admin, verder, partner.docx` 
 
 ### Later (design v2 §13)
 - [ ] White-label partner (panel, domains, price book, monthly billing), vendor KYC + payouts, full theming, dedicated-DB tier, visual workflow builder
+
+## Product v3 — enterprise UX and flows (gap review, 2026-10-24)
+Review against Zoho Books/One, Odoo, ERPNext, NetSuite, Tally/Vyapar/Marg: today's screens are forms without a journey. This section closes that gap. UI language is **global English only** (no Hindi or other locales); industry terminology still changes per template. Each phase starts with a short wireframe + case list that Rahul approves before code.
+
+### Phase 0 — Design system and validation (building blocks done 2026-10-24)
+Built: `backend/src/contracts/validation.ts` (dependency-free field rules, imported by the web app as `@contracts/validation` — `turbopack.root` is the repo root), `kernel/zodRules.ts` (same rules as Zod), `lib/use-form.ts`, `lib/use-unsaved.ts`, `components/form.tsx` (Field states, ErrorSummary, DiscardChangesDialog), `components/editable-section.tsx` (view → edit → confirm with diff + reason), `components/data-list.tsx`, `components/page-states.tsx`. Applied to: Settings › Business (both cards, version check, reason in audit), CRM contact form (live duplicate check via `GET /contacts/duplicates`, email typo hint), Invoices + Quotations lists. API now uses the shared rules for business profile, branches, CRM, invoices (buyer + lines), catalogue HSN/SAC, signup and Console new client. Tests: `validation.test.ts` (10); suite 71/71.
+- [x] View-first pattern with confirm-with-diff + reason for sensitive fields (Settings › Business; `tenant.update` audit keeps before/after + reason; stale `expectedUpdatedAt` → 409)
+- [~] Unsaved-changes guard (link clicks + reload) and Discard dialog — on Business settings and the contact form; other forms still to move over. Undo toast not built
+- [~] List-page component: search, filter chips, preset tabs, personal saved views (this browser), column chooser, density, selection + bulk bar, CSV export of all filtered rows (≤ 5,000), cursor pages 25/50/100, keyboard + Ctrl+click, cards on phones — on Invoices/Quotations. Sorting sorts the current page only (API has no sort yet); shared views (admin) need an API
+- [~] Page states: first use, no results, loading skeleton (+ "Still loading…"), error with reference ID, no access, module locked, read-only banner — components exist; wired into the list component, other pages still to adopt. Breadcrumbs not built
+- [x] Shared rules used by frontend and backend (one file, same messages)
+- [ ] Idempotency-Key on money/document POSTs (API store not built yet)
+- [~] Validation checklist — rules exist for all items below; applied to the forms listed above, the rest move over screen by screen:
+  - Required fields marked; errors inline under the field, shown on blur and on submit, focus moves to the first error
+  - Formats: mobile (+91, 10 digits, starts 6–9), email, GSTIN (pattern + checksum + state code matches the chosen state), PAN, TAN, IFSC, PIN code (6 digits), HSN (4/6/8) / SAC (6), UPI ID, URL
+  - Lengths and ranges: names 2–100, notes max length, quantity > 0, discount 0–100 % or ≤ line amount, money in paise with 2 decimals, GST rate from the allowed list
+  - Dates: valid calendar dates, no future date where it makes no sense (invoice date, DOB), end ≥ start, inside an open financial year / unlocked period
+  - Uniqueness checked live (SKU, invoice number, email/mobile of a member) with a debounced API call
+  - Cross-field rules (IGST vs CGST+SGST from states, password confirm, "same as billing address")
+  - Normalise input: trim spaces, upper-case GSTIN/PAN/IFSC, strip spaces from mobile, Indian number format (lakh/crore) for display
+  - Files: type and size limits, image dimensions for logos, CSV header check with a row-level error report
+  - Submit disabled while saving, no double submit (Idempotency-Key on money/document POSTs), server 422 fields mapped back onto the form
+  - Password strength meter and rules; OTP: numeric 6 digits, resend timer, attempts left
+
+### Phase 1 — Signup, workspace provisioning, setup wizard (built 2026-10-24)
+Built: `contracts/workspace.ts` (industries, goals, preferences + defaults, prefix/brand-colour rules, setup + provisioning types, shared with the web app), migration `20261024020000_workspace_setup` (`tenants.profile`, `tenants.preferences`), `modules/tenancy/workspace.ts`; routes `GET /public/industries` (templates + 23 industries), `GET /public/signup/check`, `GET /public/coupons/:code`, `POST /auth/signup` v2, `POST /auth/businesses`, `GET /tenant/workspace`, `PATCH /tenant/profile`, `PUT /tenant/preferences/:section`, `POST /tenant/sequences/invoice-start`, `PATCH /tenant/setup`, `GET /tenant/provisioning`, `POST /tenant/provisioning/retry`. Web: `(onboard)/signup` (5 steps), `/app/welcome`, `/app/setup` (7 steps), dashboard "Finish setting up" card, `WorkspaceBranding` (brand colour, font, density, default theme), sidebar ordered by the owner's picks. Effects: invoice/quotation/receipt prefixes + start number used by `allocateNumber`, default terms on new documents, seller phone/email/bank/UPI frozen on issue and printed with a real UPI QR (`qrcode` 1.5.4). Tests: `workspace.test.ts` (10). Checked in the browser end to end: signup (errors, typo hint, live checks, resume draft, wrong OTP) → loading screen → every wizard step → invoice `GS/26-27/0101` with QR.
+Not built yet: Google sign-up (needs an OAuth client), GSTIN "Fetch details" (needs a GSP API — the state is taken from the GSTIN digits), logo/signature upload (needs file storage), sample data, Excel (.xlsx) import (CSV only), items/opening-dues import, applying the Taxes choices to item forms and invoice titles (stored only), invoice templates other than the current layout (choice stored), "signups paused" switch.
+- Note: signup runs ~25 sequential queries; with the database in us-east-2 it takes 10–20 s, so its transaction timeout is 30 s and new tenants create entitlements in one INSERT
+- [x] Multi-step signup with progress: Account → Business → What you want to manage → Verify
+  - Account: name, email, mobile, password (strength meter), Google sign-up, real Terms checkbox, OTP resend timer, email OTP option
+  - Business: business name, business type (Proprietor / Partnership / LLP / Pvt Ltd / Public Ltd / Trust-NGO), GST registered? → GSTIN auto-fill (legal name, state) when the lookup API is available, composition scheme, state/city, team size, number of branches
+  - Industry as icon cards with search, then sub-industry (see Industry coverage below)
+  - Goals (billing, stock, bookings, staff, CRM, accounts…) pre-select recommended modules, user can change them
+  - Cases: mobile/email already registered → sign in or add a new business; duplicate trial → clear message + paid path; invited user → join, not create; abandoned signup → draft resumes
+- [x] Workspace provisioning screen: full-screen animation whose steps tick from real backend progress (business created → template applied → roles created → starter catalogue → dashboard ready); provisioning becomes an async job with a status endpoint; Retry on failure
+- [x] Setup wizard after the first load (skippable, resumable, progress saved) — see "Not built yet" above:
+  - Business profile: logo upload, address, PAN, financial year
+  - Documents: number prefixes per document, invoice template with live preview, terms, signature, bank details + UPI QR
+  - Taxes: GST settings, reverse charge (TDS/TCS later)
+  - Bring data in: customers and items from CSV/Excel, opening balances, or "try with sample data" (removable)
+  - Invite team with roles
+  - Branding: brand colour, theme, font
+  - Finish screen with "Create your first invoice"
+
+### Phase 2 — Settings, My account, security
+- [ ] Settings with a grouped sidebar and search:
+  - Organization: profile, branches, financial year, currency, time zone, date and number format
+  - Branding & appearance: logo, brand colour, light/dark/system theme, font, density, sidebar style
+  - Documents: number series per document, templates + preview, terms, signature, print size (A4 / 80 mm / 58 mm)
+  - Taxes: GST, composition, reverse charge, HSN rules; later TDS/TCS, e-invoice, e-way bill
+  - Payments: bank accounts, UPI QR, payment modes, the tenant's own Razorpay keys
+  - Users & security: enforce MFA (all users / admins / per role), password policy (length, expiry, reuse), session timeout, IP allowlist, active sessions, sign out everywhere, login history
+  - Roles & permissions: custom roles (clone + edit), permission matrix grid, field-level access
+  - Notifications: email/SMS/WhatsApp templates, which event notifies whom
+  - Customization: custom fields, form layouts, terminology, pipeline stages, statuses
+  - Data: import/export, backup download, close account (30-day soft delete)
+  - Subscription: plan, usage meters, AHEAD invoices, upgrade/downgrade, add-ons
+  - Integrations: API keys, webhooks (later)
+- [ ] My account (every user): profile + photo, change password, MFA (authenticator app + backup codes; OTP fallback), personal theme/font/density, notification preferences, devices and sessions
+
+### Phase 3 — Dashboard v2 with module tabs
+- [ ] Tabs: **Overview** + one tab per module the user can see (Sales, Billing, CRM, Bookings, Inventory, Finance, HR, Tasks, Support, Reports); a tab shows only when the module is entitled and the role has its dashboard permission; read-only modules show their tab with an upgrade note; last opened tab remembered per user
+- [ ] One date-range filter shared by all tabs, with comparison to the previous period; branch filter for multi-branch tenants
+- [ ] Overview: today's money (sales, collections, dues), approvals/to-do inbox, today's appointments/tasks, recent activity, quick "+ New"
+- [ ] Module tabs (each loads its own widgets lazily):
+  - Sales: quotations sent / won, conversion, top customers, pending orders
+  - Billing: invoiced vs collected, dues ageing, overdue list, payment modes split
+  - CRM: new leads, lead sources, pipeline by stage, follow-ups due, conversion
+  - Bookings: today/this week, no-shows, utilisation by staff/resource
+  - Inventory: stock value, low stock / reorder, expiring batches, fast/slow movers
+  - Finance: expenses by category, cash and bank balance, P&L snapshot, GST payable
+  - HR: headcount, today's attendance, on leave, payroll due, birthdays
+  - Tasks: open/overdue by person, completed this week
+  - Support: open tickets, SLA breaches, average resolution time
+- [ ] Role-aware defaults (Owner sees money first, staff see their own work); widgets can be hidden/reordered per user
+- [ ] Global search / Ctrl+K command palette (records, pages, actions)
+
+### Phase 4 — Console revamp
+- [ ] View-first everywhere (Phase 0 pattern); maker-checker approval for plan, price, coupon and settings changes; setting history with restore
+- [ ] Client 360 with tabs: Overview, Subscription, Invoices & payments, Users, Activity timeline, Notes, Account health (setup progress, limits, module status, record counts, errors — no business data)
+- [ ] Revenue dashboard: MRR/ARR, new vs churned, trial → paid funnel, collections, ageing of unpaid orders
+- [ ] Sales workspace: prospects list, follow-up tasks on trial clients, reminders
+- [ ] Console security: MFA mandatory for every Console user, IP allowlist, session list
+
+### Industry coverage (match the big ERPs)
+Today: 6 templates (salon, retail, pharmacy, gym, coaching/school, service company). Each new industry = template (modules, terminology, custom fields, dashboard widgets, starter catalogue) + the industry-specific feature it needs; features in brackets need modules that do not exist yet.
+- [ ] Retail & wholesale / distribution / FMCG (schemes, price lists, beat routes)
+- [ ] Manufacturing (BOM, job work, production orders) — needs a Manufacturing module
+- [ ] Restaurant / café / cloud kitchen (tables, KOT, recipes) — needs POS + KOT
+- [ ] Hotel / homestay (rooms, check-in/out)
+- [ ] Clinic / hospital / diagnostic lab (patients, prescriptions, reports)
+- [ ] Pharmacy (batch, expiry, Schedule H) — template exists, batch/expiry arrive with Inventory
+- [ ] Salon / spa, gym / fitness — templates exist
+- [ ] School / coaching / training (students, fees, batches) — template exists, fee module needed
+- [ ] Jewellery (weight, purity, making charges, old-gold exchange)
+- [ ] Apparel / textile / footwear (size × colour variants)
+- [ ] Electronics / mobile shop (IMEI/serial, warranty)
+- [ ] Automobile dealer / service garage (vehicle, job card)
+- [ ] Hardware / building materials, furniture, optical store
+- [ ] Construction / real estate (projects, units, site expenses)
+- [ ] Professional services: CA / legal / consulting, IT / agency (projects, timesheets, retainers)
+- [ ] Field service / AMC / repairs (service tickets, visits, contracts)
+- [ ] Logistics / transport (trips, vehicles, freight bills)
+- [ ] Travel agency, event management
+- [ ] Agriculture / agro inputs
+- [ ] NGO / trust (donations, 80G receipts)
+
+### External dependencies for this section
+- [ ] File storage (S3 or Cloudflare R2) — logo, signature, imports
+- [ ] SMS + email provider — real OTP and notifications
+- [ ] GSTIN lookup API (GSP, paid) — signup auto-fill
+- [ ] Google OAuth client — Google sign-in
 
 ## Phase 2 — Operations (weeks 5–8)
 Exit gate: stock and accounts update from sales and purchases.

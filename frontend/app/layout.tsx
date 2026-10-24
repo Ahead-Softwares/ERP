@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next"
-import { Geist_Mono, Inter } from "next/font/google"
+import { Geist_Mono, IBM_Plex_Sans, Inter, Manrope, Source_Sans_3 } from "next/font/google"
 
 import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
@@ -9,6 +9,10 @@ import { SITE } from "@/lib/site"
 import { cn } from "@/lib/utils"
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" })
+// Workspace font choices (Settings › Branding); only the chosen one is downloaded
+const manrope = Manrope({ subsets: ["latin"], variable: "--font-manrope", preload: false })
+const plex = IBM_Plex_Sans({ subsets: ["latin"], weight: ["400", "500", "600", "700"], variable: "--font-plex", preload: false })
+const sourceSans = Source_Sans_3({ subsets: ["latin"], variable: "--font-source", preload: false })
 
 const fontMono = Geist_Mono({
   subsets: ["latin"],
@@ -58,7 +62,7 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={cn("antialiased", fontMono.variable, "font-sans", inter.variable)}
+      className={cn("antialiased", fontMono.variable, "font-sans", inter.variable, manrope.variable, plex.variable, sourceSans.variable)}
     >
       <body>
         <ThemeProvider>

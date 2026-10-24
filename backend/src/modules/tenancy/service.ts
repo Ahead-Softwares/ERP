@@ -11,10 +11,11 @@ import { publish } from '../events/outbox';
 import { audit } from '../audit/service';
 import { notify, sendMessage } from '../notifications/service';
 import { consumeOtp } from '../identity/otp';
+import { optionalText, zGstin, zPincode, zReason, zStateCode } from '../../kernel/zodRules';
+import { gstinStateMismatch } from '../../contracts/validation';
 
 // Tenant administration (LLD §10.2): profile, branches, members, invitations.
 
-const GSTIN = /^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export const Address = z.object({
@@ -22,19 +23,26 @@ export const Address = z.object({
   line2: z.string().trim().max(200).optional(),
   city: z.string().trim().max(80).optional(),
   state: z.string().trim().max(80).optional(),
-  pincode: z.string().trim().regex(/^\d{6}$/, 'Enter a 6-digit PIN code').optional().or(z.literal('')),
+  pincode: zPincode.optional().or(z.literal('')),
 });
 
 export const TenantPatch = z.object({
-  name: z.string().trim().min(2).max(120).optional(),
-  legalName: z.string().trim().max(160).nullable().optional(),
-  gstin: z.string().trim().toUpperCase().regex(GSTIN, 'Enter a valid 15-character GSTIN').nullable().optional().or(z.literal('').transform(() => null)),
-  billingStateCode: z.string().regex(/^\d{2}$/, 'Two-digit GST state code').nullable().optional(),
+  name: z.string().trim().min(2, 'Use at least 2 characters').max(100, 'Keep it under 100 characters').optional(),
+  legalName: optionalText(z.string().trim().max(160, 'Keep it under 160 characters')),
+  gstin: optionalText(zGstin),
+  billingStateCode: zStateCode.nullable().optional(),
   address: Address.nullable().optional(),
-  logoUrl: z.string().url().max(500).nullable().optional(),
+  logoUrl: optionalText(z.string().url('Enter a full link, e.g. https://example.com').max(500)),
   timezone: z.string().max(60).optional(),
   fyStartMonth: z.number().int().min(1).max(12).optional(),
+  /** Required when a sensitive field changes; kept in the audit log */
+  reason: zReason.optional(),
+  /** updatedAt the client last saw; a mismatch means someone else saved in between */
+  expectedUpdatedAt: z.string().datetime().optional(),
 });
+
+/** Changing these affects documents already issued or tax maths, so they need a reason. */
+const SENSITIVE_TENANT_FIELDS = ['legalName', 'gstin', 'billingStateCode', 'fyStartMonth'] as const;
 
 export async function getTenant(tenantId: string) {
   const t = await db().tenant.findUnique({ where: { id: tenantId } });
@@ -42,16 +50,37 @@ export async function getTenant(tenantId: string) {
   return t;
 }
 
-export async function updateTenant(tenantId: string, patch: z.infer<typeof TenantPatch>) {
+export async function updateTenant(tenantId: string, input: z.infer<typeof TenantPatch>) {
+  const { reason, expectedUpdatedAt, ...patch } = input;
   const before = await getTenant(tenantId);
+  if (expectedUpdatedAt && new Date(expectedUpdatedAt).getTime() !== before.updatedAt.getTime()) {
+    throw new AppError('VERSION_CONFLICT', 'Someone else changed these details after you opened them. Reload to see the latest.');
+  }
   // GSTIN state code must match the chosen state
   const gstin = patch.gstin === undefined ? before.gstin : patch.gstin;
   const state = patch.billingStateCode === undefined ? before.billingStateCode : patch.billingStateCode;
-  if (gstin && state && gstin.slice(0, 2) !== state) {
-    throw new AppError('VALIDATION_FAILED', 'GSTIN does not match the selected state.', { fields: { gstin: 'First two digits must match the state code' } });
+  const mismatch = gstinStateMismatch(gstin, state);
+  if (mismatch) throw new AppError('VALIDATION_FAILED', mismatch, { fields: { gstin: mismatch } });
+
+  const changed = (Object.keys(patch) as (keyof typeof patch)[]).filter((k) => JSON.stringify(patch[k] ?? null) !== JSON.stringify(before[k] ?? null));
+  if (!changed.length) return before;
+  // Filling an empty field (first setup) needs no reason; changing a value that's already set does
+  if (changed.some((k) => (SENSITIVE_TENANT_FIELDS as readonly string[]).includes(k) && before[k] != null) && !reason) {
+    throw new AppError('VALIDATION_FAILED', 'Add a reason for this change.', { fields: { reason: 'Add a reason (10–500 characters)' } });
   }
-  const after = await db().tenant.update({ where: { id: tenantId }, data: { ...patch, address: patch.address ?? undefined } });
-  await audit({ action: 'tenant.update', entity: 'tenant', entityId: tenantId, before, after: patch });
+  if (changed.includes('fyStartMonth') && (await db().salesDocument.count({ where: { kind: 'invoice', number: { not: null } } })) > 0) {
+    const message = 'The financial year is locked after your first invoice.';
+    throw new AppError('VALIDATION_FAILED', message, { fields: { fyStartMonth: message } });
+  }
+  const data = Object.fromEntries(changed.map((k) => [k, patch[k]]));
+  const after = await db().tenant.update({ where: { id: tenantId }, data: { ...data, address: patch.address ?? undefined } });
+  await audit({
+    action: 'tenant.update',
+    entity: 'tenant',
+    entityId: tenantId,
+    before: Object.fromEntries(changed.map((k) => [k, before[k]])),
+    after: { ...data, ...(reason ? { reason } : {}) },
+  });
   return after;
 }
 
@@ -79,8 +108,8 @@ export const BranchInput = z.object({
   name: z.string().trim().min(2).max(100),
   code: z.string().trim().toUpperCase().regex(/^[A-Z0-9-]{2,12}$/, '2–12 letters, digits or dashes'),
   address: Address.optional(),
-  stateCode: z.string().regex(/^\d{2}$/).optional(),
-  gstin: z.string().trim().toUpperCase().regex(GSTIN, 'Enter a valid GSTIN').optional(),
+  stateCode: zStateCode.optional(),
+  gstin: zGstin.optional(),
 });
 
 export async function listBranches() {

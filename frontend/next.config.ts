@@ -1,4 +1,8 @@
+import { fileURLToPath } from "node:url"
 import type { NextConfig } from "next"
+
+// Repo root: lets the app import the API's dependency-free contracts (e.g. field rules)
+const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url))
 
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:5000"
 
@@ -7,6 +11,8 @@ const NOINDEX = ["/app", "/app/:path*", "/console", "/console/:path*", "/d/:path
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  turbopack: { root: REPO_ROOT },
+  outputFileTracingRoot: REPO_ROOT,
   // Same-origin API: the refresh-token cookie stays first-party and no CORS is needed
   async rewrites() {
     return [{ source: "/api/v1/:path*", destination: `${BACKEND_URL}/api/v1/:path*` }]

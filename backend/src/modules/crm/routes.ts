@@ -3,7 +3,9 @@ import { z } from 'zod';
 import type { Prisma } from '@prisma/client';
 import { db, withTenant } from '../../kernel/db';
 import { AppError, notFound } from '../../kernel/errors';
-import { normaliseEmail, normaliseMobile } from '../../kernel/crypto';
+import { normaliseEmail } from '../../kernel/crypto';
+import { optionalText, zEmail, zGstin, zPhone, zPincode, zStateCode } from '../../kernel/zodRules';
+import * as rules from '../../contracts/validation';
 import { IdParam, ListQuery, assertRecordLimit, assertVersion, inScope, markOnboarding, page, pageArgs, scopeWhere } from '../../kernel/query';
 import { validate } from '../../middleware/request';
 import { requirePermission, tenantAuth, tx } from '../../middleware/auth';
@@ -16,20 +18,18 @@ import { notify } from '../notifications/service';
 const router = Router();
 router.use(tenantAuth);
 
-const GSTIN = /^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 const OWNER_FIELDS = { owner: ['createdBy', 'ownerId'], branch: 'branchId' };
 
-const Phone = z.string().trim().transform(normaliseMobile).pipe(z.string().regex(/^\+?\d{8,15}$/, 'Enter a valid phone number'));
-const optional = <T extends z.ZodTypeAny>(s: T) => s.optional().nullable().or(z.literal('').transform(() => null));
+const optional = optionalText;
 
 const ContactInput = z.object({
-  name: z.string().trim().min(1).max(160),
+  name: z.string().trim().min(2, 'Use at least 2 characters').max(160, 'Keep it under 160 characters'),
   companyName: optional(z.string().trim().max(160)),
-  phone: optional(Phone),
-  email: optional(z.string().trim().email('Enter a valid email').transform(normaliseEmail)),
-  gstin: optional(z.string().trim().toUpperCase().regex(GSTIN, 'Enter a valid GSTIN')),
-  stateCode: optional(z.string().regex(/^\d{2}$/)),
-  address: z.object({ line1: z.string().max(200).optional(), city: z.string().max(80).optional(), pincode: z.string().max(10).optional() }).optional().nullable(),
+  phone: optional(zPhone),
+  email: optional(zEmail),
+  gstin: optional(zGstin),
+  stateCode: optional(zStateCode),
+  address: z.object({ line1: z.string().max(200).optional(), city: z.string().max(80).optional(), pincode: zPincode.optional().or(z.literal('')) }).optional().nullable(),
   leadStatus: z.enum(['new', 'contacted', 'qualified', 'lost']).optional(),
   leadSource: optional(z.string().trim().max(60)),
   ownerId: optional(z.string().uuid()),
@@ -116,6 +116,23 @@ function registerContactRoutes(kind: Kind, base: string) {
 
 registerContactRoutes('customer', '/contacts');
 registerContactRoutes('lead', '/leads');
+
+// Live duplicate check while a contact form is being filled (same rule as create)
+const DuplicateQuery = z.object({
+  kind: z.enum(['customer', 'lead']).default('customer'),
+  phone: optionalText(zPhone),
+  email: optionalText(zEmail),
+  excludeId: z.string().uuid().optional(),
+});
+router.get(
+  '/contacts/duplicates',
+  validate(DuplicateQuery, 'query'),
+  (req, res, next) => requirePermission(perm((req.query as unknown as z.infer<typeof DuplicateQuery>).kind, 'create'))(req, res, next),
+  tx(async (req, res) => {
+    const q = req.query as unknown as z.infer<typeof DuplicateQuery>;
+    res.json({ duplicate: await findDuplicate(q.phone, q.email, q.excludeId) });
+  }),
+);
 
 // Single-record routes work for both kinds; the permission follows the record's type.
 async function contactPerm(req: Request, action: string) {
@@ -268,16 +285,18 @@ router.post(
       const parsed = ImportRow.safeParse(Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, v == null ? undefined : String(v)])));
       if (!parsed.success) return result.errors.push({ row: i + 1, message: parsed.error.issues[0].message });
       const r = parsed.data;
-      const phone = r.phone ? normaliseMobile(r.phone) : null;
+      const problem = (r.phone && rules.phone(r.phone)) || (r.email && rules.email(r.email)) || (r.gstin && rules.gstin(r.gstin));
+      if (problem) return result.errors.push({ row: i + 1, message: problem });
+      const phone = r.phone ? rules.storedPhone(r.phone) : null;
       const email = r.email ? normaliseEmail(r.email) : null;
-      if (email && !z.string().email().safeParse(email).success) return result.errors.push({ row: i + 1, message: 'Invalid email' });
+      const gstin = r.gstin ? rules.upperNoSpaces(r.gstin) : null;
       if ((phone && phones.has(phone)) || (email && emails.has(email))) return result.duplicates.push({ row: i + 1, name: r.name, reason: phone && phones.has(phone) ? 'Phone already exists' : 'Email already exists' });
       if (phone) phones.add(phone);
       if (email) emails.add(email);
       toCreate.push({
         tenantId: ctx.tenantId, type, name: r.name, phone, email, companyName: r.companyName || null,
-        gstin: r.gstin && GSTIN.test(r.gstin.toUpperCase()) ? r.gstin.toUpperCase() : null,
-        stateCode: r.gstin && GSTIN.test(r.gstin.toUpperCase()) ? r.gstin.slice(0, 2) : null,
+        gstin,
+        stateCode: gstin ? gstin.slice(0, 2) : null,
         address: r.city ? { city: r.city } : undefined, notes: r.notes || null,
         leadStatus: type === 'lead' ? 'new' : null, ownerId: ctx.userId, createdBy: ctx.userId,
       });

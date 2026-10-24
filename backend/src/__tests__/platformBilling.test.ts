@@ -18,7 +18,7 @@ async function rolledBack(fn: () => Promise<void>) {
   }
 }
 
-const SELLER = { legalName: 'AHEAD Test', gstin: '09AAAAA0000A1Z5', stateCode: '09', address: 'Noida', sac: '998314', gstRateBp: 1800 };
+const SELLER = { legalName: 'AHEAD Test', gstin: '09AAAAA0000A1Z0', stateCode: '09', address: 'Noida', sac: '998314', gstRateBp: 1800 };
 function primeSettings(billing: typeof SELLER | null) {
   cache.del('settings:platform');
   const stored = new Map<string, { value: unknown; version: number }>();

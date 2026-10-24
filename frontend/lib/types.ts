@@ -1,3 +1,5 @@
+import type { SetupState, WorkspacePreferences } from "@contracts/workspace"
+
 export type ModuleKey =
   | "crm"
   | "catalog"
@@ -59,11 +61,16 @@ export interface Me {
     gstin: string | null
     billingStateCode: string | null
     timezone: string
+    fyStartMonth: number
     billingOwner: "self" | "partner"
     configApplied: boolean
     needsSeatChoice: boolean
     isOwner: boolean
-    onboarding: { dashboard?: string[]; recommendedModules?: ModuleKey[] }
+    onboarding: { dashboard?: string[]; recommendedModules?: ModuleKey[]; setup?: SetupState }
+    createdAt: string
+    branding: WorkspacePreferences["branding"]
+    /** Modules the owner chose at signup, in order */
+    preferredModules: ModuleKey[]
   }
   role?: { id: string; key: string; name: string; roleType: string }
   subscription?: { status: TenantStatus; planKey: string; trialEndsAt: string | null; daysLeft: number | null; currentPeriodEnd: string | null }

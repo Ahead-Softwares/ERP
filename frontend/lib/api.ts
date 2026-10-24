@@ -6,7 +6,9 @@ export class ApiError extends Error {
     readonly status: number,
     readonly code: string,
     message: string,
-    readonly details?: Record<string, unknown>
+    readonly details?: Record<string, unknown>,
+    /** X-Request-Id of the failed call, shown to users to quote to support */
+    readonly requestId?: string
   ) {
     super(message)
   }
@@ -82,8 +84,9 @@ async function request<T>(method: Method, path: string, body?: unknown, retried 
   }
   if (!res.ok) {
     const e = json?.error ?? {}
-    if (!e.code && res.status >= 500) throw new ApiError(res.status, "PROVIDER_UNAVAILABLE", "The server is not responding. Please try again in a moment.")
-    throw new ApiError(res.status, e.code ?? "INTERNAL", e.message ?? "Something went wrong.", e.details)
+    const requestId = res.headers.get("x-request-id") ?? undefined
+    if (!e.code && res.status >= 500) throw new ApiError(res.status, "PROVIDER_UNAVAILABLE", "The server is not responding. Please try again in a moment.", undefined, requestId)
+    throw new ApiError(res.status, e.code ?? "INTERNAL", e.message ?? "Something went wrong.", e.details, requestId)
   }
   return json as T
 }

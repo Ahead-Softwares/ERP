@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { db } from '../../kernel/db';
 import { IdParam, ListQuery } from '../../kernel/query';
+import { optionalText, zEmail, zGstin, zMobileIN, zPersonName, zStateCode } from '../../kernel/zodRules';
+import { gstinStateMismatch } from '../../contracts/validation';
 import { validate } from '../../middleware/request';
 import { consoleAuth, consoleTx, requirePlatformPermission } from '../../middleware/auth';
 import { SETTINGS, SETTING_KEYS, type SettingKey } from '../../contracts/settings';
@@ -180,7 +182,7 @@ router.get('/audit', requirePlatformPermission('platform.audit.view'), validate(
 }));
 
 // ── New paid client (design v2 §4B) ──
-const GstState = z.string().regex(/^\d{2}$/, 'Two-digit GST state code');
+const GstState = zStateCode;
 const OrderInput = z.object({
   planKey: z.string().max(40),
   cycle: z.enum(['monthly', 'yearly']),
@@ -202,12 +204,15 @@ const NewClientBody = z.object({
   business: z.object({
     name: z.string().trim().min(2).max(120),
     industryKey: z.string().max(40),
-    gstin: z.string().trim().regex(/^[0-9A-Z]{15}$/i, 'GSTIN has 15 letters and digits').nullish().or(z.literal('')),
+    gstin: optionalText(zGstin),
     stateCode: GstState,
     address: z.string().trim().max(300).nullish(),
   }),
-  owner: z.object({ name: z.string().trim().min(2).max(100), email: z.string().trim().email(), mobile: z.string().trim().min(8).max(20) }),
+  owner: z.object({ name: zPersonName, email: zEmail, mobile: zMobileIN }),
   order: OrderInput,
+}).superRefine((b, c) => {
+  const mismatch = gstinStateMismatch(b.business.gstin, b.business.stateCode);
+  if (mismatch) c.addIssue({ code: z.ZodIssueCode.custom, path: ['business', 'gstin'], message: mismatch });
 });
 
 router.post('/clients', requirePlatformPermission('platform.tenant.create'), validate(NewClientBody), consoleTx(async (req, res) => {

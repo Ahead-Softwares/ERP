@@ -1,4 +1,4 @@
-import type { AcquiredByType, AcquisitionMethod, TenantSource } from '@prisma/client';
+import type { AcquiredByType, AcquisitionMethod, Prisma, TenantSource } from '@prisma/client';
 import { db } from '../../kernel/db';
 import { AppError } from '../../kernel/errors';
 import { pepperedHash } from '../../kernel/crypto';
@@ -40,6 +40,9 @@ export interface CreateTenantInput {
   isInternal?: boolean;
   gstin?: string;
   billingStateCode?: string;
+  legalName?: string | null;
+  /** Signup answers (contracts/workspace.ts WorkspaceProfile) */
+  profile?: Record<string, unknown>;
   /** design v2: sales/vendor onboarding — no trial, modules open after the first payment */
   paidOnboarding?: { planId: string; cycle: 'monthly' | 'yearly' };
 }
@@ -106,6 +109,8 @@ export async function createTenant(input: CreateTenantInput) {
       billingOwner: input.partnerId ? 'partner' : 'self',
       gstin,
       billingStateCode: input.billingStateCode,
+      legalName: input.legalName ?? null,
+      profile: (input.profile ?? {}) as Prisma.InputJsonValue,
       ownerUserId: user.id,
     },
   });

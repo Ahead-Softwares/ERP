@@ -294,6 +294,10 @@ model Tenant {
   needsSeatChoice  Boolean        @default(false) @map("needs_seat_choice")
   configAppliedAt  DateTime?      @map("config_applied_at") @db.Timestamptz
   onboarding       Json           @default("{}")
+  /// Signup answers: business type, team size, goals … (contracts/workspace.ts WorkspaceProfile)
+  profile          Json           @default("{}")
+  /// Documents, payments, taxes and branding (contracts/workspace.ts WorkspacePreferences)
+  preferences      Json           @default("{}")
   closedAt         DateTime?      @map("closed_at") @db.Timestamptz
   createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz
   updatedAt        DateTime       @updatedAt @map("updated_at") @db.Timestamptz

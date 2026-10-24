@@ -92,15 +92,20 @@ export async function persistEntitlements(tenantId: string) {
   const limits = withExtraUsers(resolveLimits(sub.status, plan.limits as unknown as PlanLimits, defaults), await extraUsers(tx, sub.items), sub.status);
   const now = new Date();
 
-  for (const key of MODULE_KEYS) {
+  const dataFor = (key: ModuleKey) => {
     const e = resolved[key];
     const prev = rows.find((r) => r.moduleKey === key);
-    const data = { status: e.status, limits: { tier: e.tier }, activatedAt: prev?.activatedAt ?? (e.status === 'active' ? now : null) };
-    await tx.tenantEntitlement.upsert({
-      where: { tenantId_moduleKey: { tenantId, moduleKey: key } },
-      create: { tenantId, moduleKey: key, ...data },
-      update: data,
-    });
+    return { status: e.status, limits: { tier: e.tier }, activatedAt: prev?.activatedAt ?? (e.status === 'active' ? now : null) };
+  };
+  // New tenant: one INSERT instead of a round trip per module (signup is latency-bound)
+  const missing = MODULE_KEYS.filter((k) => !rows.some((r) => r.moduleKey === k));
+  if (missing.length) await tx.tenantEntitlement.createMany({ data: missing.map((key) => ({ tenantId, moduleKey: key, ...dataFor(key) })) });
+  for (const key of MODULE_KEYS) {
+    if (missing.includes(key)) continue;
+    const data = dataFor(key);
+    const prev = rows.find((r) => r.moduleKey === key)!;
+    if (prev.status === data.status && JSON.stringify(prev.limits) === JSON.stringify(data.limits) && +(prev.activatedAt ?? 0) === +(data.activatedAt ?? 0)) continue;
+    await tx.tenantEntitlement.update({ where: { tenantId_moduleKey: { tenantId, moduleKey: key } }, data });
   }
   cache.del(`ent:tenant:${tenantId}`);
   return { modules: resolved, limits, planKey: plan.key };

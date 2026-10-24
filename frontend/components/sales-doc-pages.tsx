@@ -9,9 +9,10 @@ import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { PageHeader } from "@/components/app-shell"
-import { ConfirmDialog, EmptyState, LoadMore, MoneyInput, SearchInput, Spinner, StatusBadge } from "@/components/common"
+import { ConfirmDialog, EmptyState, MoneyInput, Spinner, StatusBadge } from "@/components/common"
+import { DataList, periodFilter, type Column } from "@/components/data-list"
+import { todayInIndia } from "@contracts/validation"
 import { Field, FormError, NativeSelect } from "@/components/form"
 import { SalesDocEditor } from "@/components/sales-doc-editor"
 import { SalesDocView } from "@/components/sales-doc-view"
@@ -19,7 +20,6 @@ import type { ContactOption } from "@/components/pickers"
 import { api, ApiError, errorMessage } from "@/lib/api"
 import { useAuth } from "@/lib/auth"
 import { useApi } from "@/lib/use-api"
-import { useDebounced, useList } from "@/lib/use-list"
 import { formatDate, formatPaise } from "@/lib/format"
 import { PAYMENT_METHODS } from "@/lib/money"
 import { docApi, docLabel, docPath, type SalesDoc } from "@/lib/sales"
@@ -57,73 +57,69 @@ const STATUS_FILTERS: Record<Kind, { value: string; label: string }[]> = {
 }
 
 export function SalesDocList({ kind }: { kind: Kind }) {
-  const router = useRouter()
-  const { can } = useAuth()
-  const [search, setSearch] = React.useState("")
-  const [status, setStatus] = React.useState("")
-  const q = useDebounced(search)
-  const list = useList<Row>(docApi(kind), { q, status: status === "unpaid" ? undefined : status, unpaid: status === "unpaid" ? "true" : undefined })
-  const today = new Date().toISOString().slice(0, 10)
+  const { can, me } = useAuth()
+  const today = todayInIndia()
   const label = docLabel(kind)
+  const canCreate = can(`${perm(kind)}.create`)
+  const newButton = canCreate && (
+    <Link href={`/app/m/${docPath(kind)}/new`} className={buttonVariants()}>
+      <FilePlus2 /> New {label.toLowerCase()}
+    </Link>
+  )
+  const isOverdue = (r: Row) => kind === "invoice" && ["issued", "partially_paid"].includes(r.status) && !!r.dueDate && r.dueDate.slice(0, 10) < today
+  const statusLabel = (r: Row) => (isOverdue(r) ? "overdue" : r.status)
+
+  const columns: Column<Row>[] = [
+    { key: "number", header: "Number", hideable: false, cell: (r) => <span className="font-mono text-xs">{r.number ?? "Draft"}</span>, csv: (r) => r.number ?? "Draft", sort: (r) => r.number ?? "" },
+    { key: "customer", header: "Customer", cell: (r) => <span className="font-medium">{r.buyer?.name ?? "—"}</span>, csv: (r) => r.buyer?.name, sort: (r) => r.buyer?.name?.toLowerCase() ?? "" },
+    { key: "date", header: "Date", cell: (r) => <span className="text-muted-foreground">{formatDate(r.issueDate)}</span>, csv: (r) => r.issueDate.slice(0, 10), sort: (r) => r.issueDate },
+    ...(kind === "invoice"
+      ? [{ key: "due", header: "Due date", defaultHidden: true, cell: (r: Row) => (r.dueDate ? formatDate(r.dueDate) : "—"), csv: (r: Row) => r.dueDate?.slice(0, 10), sort: (r: Row) => r.dueDate ?? "" }]
+      : []),
+    { key: "status", header: "Status", cell: (r) => <StatusBadge status={statusLabel(r)} />, csv: statusLabel },
+    {
+      key: "amount",
+      header: "Amount",
+      align: "right",
+      cell: (r) => (
+        <>
+          <div className="font-medium">{formatPaise(r.totalPaise)}</div>
+          {kind === "invoice" && r.paidPaise > 0 && r.paidPaise < r.totalPaise && <div className="text-xs text-muted-foreground">{formatPaise(r.totalPaise - r.paidPaise)} due</div>}
+        </>
+      ),
+      csv: (r) => (r.totalPaise / 100).toFixed(2),
+      sort: (r) => r.totalPaise,
+    },
+    ...(kind === "invoice"
+      ? [{ key: "balance", header: "Balance due", align: "right" as const, defaultHidden: true, cell: (r: Row) => formatPaise(Math.max(0, r.totalPaise - r.paidPaise)), csv: (r: Row) => (Math.max(0, r.totalPaise - r.paidPaise) / 100).toFixed(2), sort: (r: Row) => r.totalPaise - r.paidPaise }]
+      : []),
+  ]
 
   return (
     <>
       <PageHeader
         title={kind === "invoice" ? "Invoices" : "Quotations"}
         description={kind === "invoice" ? "GST tax invoices, receipts and dues. Issued invoices can't be edited." : "Estimates you can send and convert into invoices."}
-        actions={can(`${perm(kind)}.create`) && <Link href={`/app/m/${docPath(kind)}/new`} className={buttonVariants()}><FilePlus2 /> New {label.toLowerCase()}</Link>}
+        actions={newButton}
       />
-      <div className="mb-4 flex flex-wrap items-center gap-3">
-        <div className="inline-flex flex-wrap rounded-full bg-muted p-1 text-sm" role="tablist">
-          {STATUS_FILTERS[kind].map((f) => (
-            <button key={f.value} role="tab" aria-selected={status === f.value} onClick={() => setStatus(f.value)} className={`rounded-full px-3 py-1 ${status === f.value ? "bg-background font-medium shadow-sm" : ""}`}>
-              {f.label}
-            </button>
-          ))}
-        </div>
-        <SearchInput value={search} onChange={setSearch} placeholder={`Search number or customer`} className="w-full sm:w-64" />
-      </div>
-      <Card>
-        <CardContent className="overflow-x-auto p-0">
-          {list.loading ? (
-            <div className="grid place-items-center py-14"><Spinner /></div>
-          ) : list.rows.length === 0 ? (
-            <EmptyState icon={FileText} title={`No ${label.toLowerCase()}s here`} description={kind === "invoice" ? "Create your first GST invoice in under a minute." : "Send a quotation and convert it to an invoice when accepted."} action={can(`${perm(kind)}.create`) && !search ? <Link href={`/app/m/${docPath(kind)}/new`} className={buttonVariants()}><FilePlus2 /> New {label.toLowerCase()}</Link> : undefined} />
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="pl-6">Number</TableHead>
-                  <TableHead>Customer</TableHead>
-                  <TableHead className="hidden sm:table-cell">Date</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="pr-6 text-right">Amount</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {list.rows.map((r) => {
-                  const overdue = kind === "invoice" && ["issued", "partially_paid"].includes(r.status) && r.dueDate && r.dueDate.slice(0, 10) < today
-                  return (
-                    <TableRow key={r.id} className="cursor-pointer" onClick={() => router.push(`/app/m/${docPath(kind)}/${r.id}`)}>
-                      <TableCell className="pl-6 font-mono text-xs">
-                        <Link href={`/app/m/${docPath(kind)}/${r.id}`} onClick={(e) => e.stopPropagation()} className="hover:underline">{r.number ?? "Draft"}</Link>
-                      </TableCell>
-                      <TableCell className="font-medium">{r.buyer?.name ?? "—"}</TableCell>
-                      <TableCell className="hidden text-muted-foreground sm:table-cell">{formatDate(r.issueDate)}</TableCell>
-                      <TableCell><StatusBadge status={overdue ? "overdue" : r.status} /></TableCell>
-                      <TableCell className="pr-6 text-right tabular-nums">
-                        <div className="font-medium">{formatPaise(r.totalPaise)}</div>
-                        {kind === "invoice" && r.paidPaise > 0 && r.paidPaise < r.totalPaise && <div className="text-xs text-muted-foreground">{formatPaise(r.totalPaise - r.paidPaise)} due</div>}
-                      </TableCell>
-                    </TableRow>
-                  )
-                })}
-              </TableBody>
-            </Table>
-          )}
-          <LoadMore hasMore={list.hasMore} loading={list.loadingMore} onClick={list.loadMore} />
-        </CardContent>
-      </Card>
+      <DataList<Row>
+        id={kind === "invoice" ? "invoices" : "quotations"}
+        path={docApi(kind)}
+        columns={columns}
+        searchPlaceholder="Search number or customer"
+        presets={STATUS_FILTERS[kind].map((f) => ({ key: f.value || "all", label: f.label, params: (f.value === "unpaid" ? { unpaid: "true" } : f.value ? { status: f.value } : {}) as Record<string, string> }))}
+        filters={[periodFilter(me?.tenant?.fyStartMonth ?? 4)]}
+        rowHref={(r) => `/app/m/${docPath(kind)}/${r.id}`}
+        exportName={kind === "invoice" ? "invoices" : "quotations"}
+        emptyState={
+          <EmptyState
+            icon={FileText}
+            title={`No ${label.toLowerCase()}s yet`}
+            description={kind === "invoice" ? "Create your first GST invoice in under a minute." : "Send a quotation and convert it to an invoice when accepted."}
+            action={newButton}
+          />
+        }
+      />
     </>
   )
 }

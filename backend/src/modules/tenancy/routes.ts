@@ -1,12 +1,12 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { db } from '../../kernel/db';
+import { db, withPlatform } from '../../kernel/db';
 import { notFound } from '../../kernel/errors';
 import { validate } from '../../middleware/request';
 import { publicRoute, requirePermission, tenantAuth, tx } from '../../middleware/auth';
-import { publicLimiter } from '../../middleware/rateLimit';
+import { lookupLimiter, publicLimiter } from '../../middleware/rateLimit';
 import { PERMISSIONS } from '../../contracts/permissions';
-import { TEMPLATES } from '../../contracts/templates';
+import { DEFAULT_TERMS, TEMPLATES, templateByKey } from '../../contracts/templates';
 import { getEntitlements } from '../subscription/entitlements';
 import { getCatalog } from '../subscription/catalog';
 import { visibleRoles } from '../access/service';
@@ -14,6 +14,9 @@ import { listAudit } from '../audit/service';
 import { listNotifications, markRead } from '../notifications/service';
 import { FieldInput, FieldPatch, createField, getTerms, listFields, putTerms, updateField } from '../config/service';
 import * as tenancy from './service';
+import * as workspace from './workspace';
+import { INDUSTRIES, INDUSTRY_GROUPS } from '../../contracts/workspace';
+import { zEmail, zMobileIN } from '../../kernel/zodRules';
 
 // Platform routes for the signed-in tenant (LLD §10.2, §10.3) plus a few public lookups.
 
@@ -22,7 +25,43 @@ const id = z.object({ id: z.string().uuid() });
 
 // ── Public lookups ──
 router.get('/public/industries', publicRoute, publicLimiter, (_req, res) => {
-  res.json({ data: TEMPLATES.map((t) => ({ key: t.key, name: t.name, description: t.description })) });
+  const fieldLabels = (t: (typeof TEMPLATES)[number]) => t.fields.map((f) => f.label);
+  res.json({
+    // Templates with what a new business gets (signup "You'll get" panel)
+    data: TEMPLATES.map((t) => ({
+      key: t.key, name: t.name, description: t.description, modules: t.modules,
+      terms: { ...DEFAULT_TERMS, ...t.terms }, fields: fieldLabels(t), dashboard: t.dashboard, starterItems: t.catalogSeed.length,
+    })),
+    industries: INDUSTRIES,
+    groups: INDUSTRY_GROUPS,
+  });
+});
+
+// Signup step 1: tell people early that they already have an account
+router.get(
+  '/public/signup/check',
+  publicRoute,
+  lookupLimiter,
+  validate(z.object({ email: zEmail.optional(), mobile: zMobileIN.optional() }), 'query'),
+  async (req, res) => {
+    const q = req.query as { email?: string; mobile?: string };
+    const taken = await withPlatform(async () => ({
+      email: q.email ? !!(await db().user.findUnique({ where: { email: q.email }, select: { id: true } })) : false,
+      mobile: q.mobile ? !!(await db().user.findUnique({ where: { mobile: q.mobile }, select: { id: true } })) : false,
+    }));
+    res.json(taken);
+  },
+);
+
+// Signup step 4: live check of a referral/coupon code (what it gives, never who owns it)
+router.get('/public/coupons/:code', publicRoute, lookupLimiter, validate(z.object({ code: z.string().trim().toUpperCase().regex(/^[A-Z0-9_-]{2,20}$/, 'Use letters and digits') }), 'params'), async (req, res) => {
+  const code = String(req.params.code);
+  const c = await withPlatform(() => db().coupon.findUnique({ where: { code } }));
+  const now = new Date();
+  const valid = !!c && (!c.validFrom || c.validFrom <= now) && (!c.validTo || c.validTo > now) && (c.maxRedemptions === null || c.redeemed < c.maxRedemptions);
+  if (!c || !valid) return res.json({ valid: false, message: c ? 'This code has expired' : "We couldn't find this code" });
+  const off = c.type === 'percent' ? `${c.value}% off` : `₹${(c.value / 100).toLocaleString('en-IN')} off`;
+  res.json({ valid: true, message: `${off} your first paid ${c.appliesTo === 'all' ? 'plan' : `${c.appliesTo} plan`}` });
 });
 
 router.get('/billing/plans', publicRoute, publicLimiter, async (_req, res) => {
@@ -67,6 +106,43 @@ router.patch('/tenant', requirePermission('tenant.settings.edit'), validate(tena
 }));
 router.get('/tenant/onboarding', requirePermission('tenant.settings.view'), tx(async (req, res) => {
   res.json(await tenancy.onboardingStatus(req.ctx!.tenantId));
+}));
+
+// ── Workspace: signup answers, preferences, setup wizard (Phase 1) ──
+router.get('/tenant/workspace', requirePermission('tenant.settings.view'), tx(async (req, res) => {
+  res.json(await workspace.getWorkspace(req.ctx!.tenantId));
+}));
+router.patch('/tenant/profile', requirePermission('tenant.settings.edit'), validate(workspace.ProfileInput), tx(async (req, res) => {
+  res.json(await workspace.updateProfile(req.ctx!.tenantId, req.body));
+}));
+router.put(
+  '/tenant/preferences/:section',
+  requirePermission('tenant.settings.edit'),
+  validate(z.object({ section: z.enum(['documents', 'payments', 'taxes', 'branding']) }), 'params'),
+  tx(async (req, res) => {
+    res.json(await workspace.updatePreferences(req.ctx!.tenantId, req.params.section as workspace.PreferenceSection, req.body));
+  }),
+);
+router.post('/tenant/sequences/invoice-start', requirePermission('tenant.settings.edit'), validate(z.object({ startAt: z.number().int().min(1, 'Start at 1 or more').max(9_999_999) })), tx(async (req, res) => {
+  await workspace.setInvoiceStart(req.ctx!.tenantId, req.body.startAt);
+  res.status(204).end();
+}));
+router.patch('/tenant/setup', requirePermission('tenant.settings.edit'), validate(workspace.SetupPatch), tx(async (req, res) => {
+  res.json(await workspace.updateSetup(req.ctx!.tenantId, req.body));
+}));
+
+// Loading screen right after signup: real progress of the tenant.created consumers
+router.get('/tenant/provisioning', tx(async (req, res) => {
+  const t = await tenancy.getTenant(req.ctx!.tenantId);
+  const template = templateByKey(t.industryKey);
+  const n = template?.catalogSeed.length ?? 0;
+  res.json(await workspace.provisioningStatus(req.ctx!.tenantId, {
+    template: `Applying the ${template?.name ?? 'business'} setup`,
+    catalog: n ? `Adding ${n} starter ${template?.catalogSeed.every((s) => s.type === 'service') ? 'services' : 'items'}` : 'Preparing your catalogue',
+  }));
+}));
+router.post('/tenant/provisioning/retry', tx(async (req, res) => {
+  res.json(await workspace.retryProvisioning(req.ctx!.tenantId));
 }));
 
 // ── Branches ──

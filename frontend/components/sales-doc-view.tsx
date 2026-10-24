@@ -1,5 +1,6 @@
 import { GST_STATES, formatDate, formatPaise } from "@/lib/format"
 import { amountInWords } from "@/lib/money"
+import { UpiQr } from "@/components/upi-qr"
 import type { Buyer, DocLine, Seller } from "@/lib/sales"
 import { cn } from "@/lib/utils"
 
@@ -56,6 +57,7 @@ export function SalesDocView({ doc, fallbackSeller, className }: { doc: ViewDoc;
             {seller?.address && <p className="max-w-xs text-neutral-600">{addr(seller.address)}</p>}
             {seller?.gstin && <p className="text-neutral-600">GSTIN: <span className="font-mono">{seller.gstin}</span></p>}
             {seller?.stateCode && <p className="text-neutral-600">State: {stateName(seller.stateCode)}</p>}
+            {(seller?.phone || seller?.email) && <p className="text-neutral-600">{[seller.phone, seller.email].filter(Boolean).join(" · ")}</p>}
           </div>
         </div>
         <div className="text-right">
@@ -143,6 +145,21 @@ export function SalesDocView({ doc, fallbackSeller, className }: { doc: ViewDoc;
           )}
         </dl>
       </section>
+
+      {doc.kind === "invoice" && (seller?.bank || seller?.upiId) && balance > 0 && (
+        <section className="mt-6 flex flex-wrap items-center gap-4 border-t border-neutral-200 pt-5 text-xs text-neutral-700" aria-label="How to pay">
+          {seller.showUpiQr && seller.upiId && <UpiQr upiId={seller.upiId} payee={seller.legalName || seller.name} amountPaise={balance} note={doc.number ?? undefined} />}
+          <div className="grid gap-1">
+            <p className="font-medium text-neutral-900">How to pay</p>
+            {seller.upiId && <p>UPI: <span className="font-mono">{seller.upiId}</span></p>}
+            {seller.bank && (
+              <p>
+                Bank transfer: {seller.bank.holder} · A/c <span className="font-mono">{seller.bank.account}</span> · IFSC <span className="font-mono">{seller.bank.ifsc}</span>
+              </p>
+            )}
+          </div>
+        </section>
+      )}
 
       {(doc.notes || doc.terms) && (
         <footer className="mt-6 grid gap-4 border-t border-neutral-200 pt-5 text-xs text-neutral-600 sm:grid-cols-2">

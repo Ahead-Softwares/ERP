@@ -11,13 +11,14 @@ import { getPlatformMember } from '../console/service';
 import { createTenant } from '../tenancy/createTenant';
 import { audit } from '../audit/service';
 import { consumeOtp, sendOtp } from './otp';
+import { zEmail, zMobileIN, zPassword, zPersonName } from '../../kernel/zodRules';
+import { BusinessSignup, signupToTenant } from '../tenancy/workspace';
 import { REFRESH_COOKIE, clearRefreshCookie, rotateSession, signAccessToken, signPurposeToken, startSession, verifyPurposeToken } from './tokens';
 import { buildMe, checkPassword, completeLogin, sendEmailVerification, setPassword } from './service';
 
 const router = Router();
 
 const Mobile = z.string().trim().transform(normaliseMobile).pipe(z.string().regex(/^\+[1-9]\d{7,14}$/, 'Enter a valid mobile number'));
-const Email = z.string().trim().email('Enter a valid email').transform(normaliseEmail);
 const Password = z.string().min(8, 'Use at least 8 characters').max(128);
 const Target = z.string().trim().min(3).transform((v) => (v.includes('@') ? normaliseEmail(v) : normaliseMobile(v)));
 
@@ -55,18 +56,20 @@ router.post(
   },
 );
 
-// ── Signup (ONB-02: only six fields) ──
+// ── Signup v2 (Phase 1): account + business steps, verified mobile ──
 
-const SignupBody = z.object({
-  name: z.string().trim().min(2).max(100),
-  email: Email,
-  mobile: Mobile,
-  password: Password,
-  businessName: z.string().trim().min(2).max(120),
-  industryKey: z.string().min(2),
-  mobileVerificationToken: z.string().min(10),
-  couponCode: z.string().trim().max(20).optional(),
-});
+const SIGNUP_TX_TIMEOUT_MS = 30_000;
+
+const SignupBody = z.intersection(
+  z.object({
+    name: zPersonName,
+    email: zEmail,
+    mobile: zMobileIN,
+    password: zPassword,
+    mobileVerificationToken: z.string().min(10),
+  }),
+  BusinessSignup,
+);
 
 router.post('/signup', publicRoute, loginLimiter, validate(SignupBody), async (req, res) => {
   const body = req.body as z.infer<typeof SignupBody>;
@@ -80,20 +83,41 @@ router.post('/signup', publicRoute, loginLimiter, validate(SignupBody), async (r
     if (!used.count) throw new AppError('OTP_TOKEN_INVALID', 'Please verify your mobile number again.');
     const created = await createTenant({
       owner: { kind: 'new', name: body.name, email: body.email, mobile: body.mobile, passwordHash, mobileVerified: true },
-      businessName: body.businessName,
-      industryKey: body.industryKey,
+      ...signupToTenant(body),
       // Vendor referral links/codes arrive with the referral module; the coupon is recorded now
-      acquisition: { byType: 'self', method: 'signup', couponCode: body.couponCode },
+      acquisition: { byType: 'self', method: 'signup', couponCode: body.couponCode ?? undefined },
     });
     const accessToken = await startSession(req, res, created.user.id, created.tenant.id, created.ownerRoleId);
     await sendEmailVerification(created.user);
     return { ...created, accessToken };
-  });
+    // ~25 sequential queries; the database is far from the API today (see TASKS "Latency")
+  }, undefined, { timeoutMs: SIGNUP_TX_TIMEOUT_MS });
 
   res.status(201).json({
     user: { id: result.user.id, name: result.user.name, emailVerified: false },
     tenant: { id: result.tenant.id, name: result.tenant.name, status: result.tenant.status, trialEndsAt: result.subscription.trialEndsAt },
     accessToken: result.accessToken,
+  });
+});
+
+// "Add another business" for a signed-in user: same business steps, no new account.
+// The one-trial rule still applies (same mobile/email), so this usually needs a paid plan.
+router.post('/businesses', authenticate, loginLimiter, validate(BusinessSignup), async (req, res) => {
+  const body = req.body as z.infer<typeof BusinessSignup>;
+  const created = await withPlatform(
+    () =>
+      createTenant({
+        owner: { kind: 'existing', userId: req.auth!.sub },
+        ...signupToTenant(body),
+        acquisition: { byType: 'self', method: 'signup', couponCode: body.couponCode ?? undefined },
+      }),
+    undefined,
+    { timeoutMs: SIGNUP_TX_TIMEOUT_MS },
+  );
+  await withPlatform(() => db().userSession.update({ where: { id: req.auth!.sid }, data: { tenantId: created.tenant.id, workspace: 'tenant' } }));
+  res.status(201).json({
+    tenant: { id: created.tenant.id, name: created.tenant.name, status: created.tenant.status },
+    accessToken: signAccessToken({ sub: req.auth!.sub, tid: created.tenant.id, rid: created.ownerRoleId, sid: req.auth!.sid, ws: 'tenant' }),
   });
 });
 

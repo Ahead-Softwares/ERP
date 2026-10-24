@@ -3,12 +3,14 @@
 import * as React from "react"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
-import { ArrowRight, CheckCircle2, Circle } from "lucide-react"
+import { ArrowRight, CheckCircle2, Circle, X } from "lucide-react"
+import { SETUP_STEPS } from "@contracts/workspace"
 import { Badge } from "@/components/ui/badge"
 import { buttonVariants } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { PageHeader } from "@/components/app-shell"
+import { api } from "@/lib/api"
 import { useAuth } from "@/lib/auth"
 import { useApi } from "@/lib/use-api"
 import { MODULE_NAV } from "@/lib/nav"
@@ -57,11 +59,58 @@ function Checklist() {
   )
 }
 
+/** Owner-only card while the setup wizard has unfinished steps (wireframe 2.7 B). */
+function FinishSetupCard() {
+  const { me, reload } = useAuth()
+  const setup = me?.tenant?.onboarding?.setup
+  const [hidden, setHidden] = React.useState(false)
+  if (hidden || !setup || setup.cardDismissedAt) return null
+  const done = SETUP_STEPS.filter((s) => setup.steps?.[s.key] === "done").length
+  if (done === SETUP_STEPS.length) return null
+  const next = SETUP_STEPS.find((s) => setup.steps?.[s.key] !== "done")!
+  return (
+    <Card className="mb-6 border-primary/30 bg-primary/5">
+      <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
+        <div>
+          <CardTitle>Finish setting up</CardTitle>
+          <CardDescription className="mt-1">
+            Next: <strong className="text-foreground">{next.label}</strong>
+            {next.neededForInvoices ? " — needed before your first invoice" : ""}
+          </CardDescription>
+        </div>
+        <button
+          type="button"
+          aria-label="Dismiss setup card"
+          className="rounded-full p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+          onClick={() => {
+            setHidden(true)
+            void api.patch("/tenant/setup", { action: "dismiss_card" }).then(() => reload())
+          }}
+        >
+          <X className="size-4" />
+        </button>
+      </CardHeader>
+      <CardContent className="flex flex-wrap items-center gap-4">
+        <div className="h-2 min-w-40 flex-1 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={done} aria-valuemin={0} aria-valuemax={SETUP_STEPS.length}>
+          <div className="h-full rounded-full bg-primary" style={{ width: `${(done / SETUP_STEPS.length) * 100}%` }} />
+        </div>
+        <span className="text-sm font-medium tabular-nums">
+          {done} of {SETUP_STEPS.length}
+        </span>
+        <Link href={`/app/setup?step=${next.key}`} className={buttonVariants()}>
+          Continue setup
+        </Link>
+      </CardContent>
+    </Card>
+  )
+}
+
 function Dashboard() {
   const { me, can, canView, term } = useAuth()
   const welcome = useSearchParams().get("welcome")
   const sub = me?.subscription
-  const recommended = me?.tenant?.onboarding?.recommendedModules ?? []
+  // Owner's picks at signup first, then the industry template's order
+  const recommended = [...new Set([...(me?.tenant?.preferredModules ?? []), ...(me?.tenant?.onboarding?.recommendedModules ?? [])])]
   const modules = MODULE_NAV.filter((m) => canView(m.key)).sort((a, b) => {
     const ia = recommended.indexOf(a.key)
     const ib = recommended.indexOf(b.key)
@@ -76,6 +125,8 @@ function Dashboard() {
         title={welcome ? `Welcome to AHEAD, ${me?.user.name.split(" ")[0]}!` : `${greeting}, ${me?.user.name.split(" ")[0]}`}
         description={welcome ? "Your workspace is ready. Here's how to get going." : me?.tenant?.name}
       />
+
+      {can("tenant.settings.edit") && me?.tenant?.isOwner && <FinishSetupCard />}
 
       {can("reports.dashboard.view") && (
         <div className="mb-6">

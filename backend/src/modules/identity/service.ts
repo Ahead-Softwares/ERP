@@ -1,3 +1,4 @@
+import { withDefaults, type WorkspaceProfile } from '../../contracts/workspace';
 import type { Request, Response } from 'express';
 import { env } from '../../config/env';
 import { db, prisma, withTenant } from '../../kernel/db';
@@ -123,9 +124,12 @@ export async function buildMe(userId: string, tenantId: string | null, workspace
       ...base,
       tenant: {
         id: tenant.id, name: tenant.name, legalName: tenant.legalName, industryKey: tenant.industryKey, status: tenant.status,
-        logoUrl: tenant.logoUrl, gstin: tenant.gstin, billingStateCode: tenant.billingStateCode, timezone: tenant.timezone,
+        logoUrl: tenant.logoUrl, gstin: tenant.gstin, billingStateCode: tenant.billingStateCode, timezone: tenant.timezone, fyStartMonth: tenant.fyStartMonth,
         billingOwner: tenant.billingOwner, configApplied: !!tenant.configAppliedAt, needsSeatChoice: tenant.needsSeatChoice,
-        isOwner: tenant.ownerUserId === userId, onboarding: tenant.onboarding,
+        isOwner: tenant.ownerUserId === userId, onboarding: tenant.onboarding, createdAt: tenant.createdAt,
+        // Workspace look for every member; modules the owner chose at signup come first in the menu
+        branding: withDefaults(tenant.preferences).branding,
+        preferredModules: ((tenant.profile ?? {}) as WorkspaceProfile).modules ?? [],
       },
       role: { ...role, name: role.key === 'service_provider' ? terms['role.service_provider'] : role.name },
       subscription: { status: ent.status, planKey: ent.planKey, trialEndsAt: ent.trialEndsAt, daysLeft, currentPeriodEnd: ent.currentPeriodEnd },

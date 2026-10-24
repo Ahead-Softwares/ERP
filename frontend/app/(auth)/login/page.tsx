@@ -11,6 +11,12 @@ import { Field, FormError } from "@/components/form"
 import { api, ApiError, errorMessage } from "@/lib/api"
 import { useAuth } from "@/lib/auth"
 
+/** ?next=/signup?mode=business — only same-site paths, never another origin */
+function nextPath() {
+  const n = new URLSearchParams(window.location.search).get("next")
+  return n && n.startsWith("/") && !n.startsWith("//") && !n.startsWith("/\\") ? n : null
+}
+
 export default function LoginPage() {
   const router = useRouter()
   const { signIn, status, me } = useAuth()
@@ -27,12 +33,12 @@ export default function LoginPage() {
   const [devCode, setDevCode] = React.useState<string | undefined>()
 
   React.useEffect(() => {
-    if (status === "authenticated") router.replace(me?.workspace === "console" ? "/console" : "/app")
+    if (status === "authenticated") router.replace(nextPath() ?? (me?.workspace === "console" ? "/console" : "/app"))
   }, [status, me, router])
 
   async function finish(accessToken: string) {
     const signedIn = await signIn(accessToken)
-    router.replace(signedIn.workspace === "console" ? "/console" : "/app")
+    router.replace(nextPath() ?? (signedIn.workspace === "console" ? "/console" : "/app"))
   }
 
   async function onPassword(e: React.FormEvent) {
