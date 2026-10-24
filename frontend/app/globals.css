@@ -130,3 +130,79 @@
     @apply font-sans;
     }
 }
+/* ---------- Public website (homepage). Light-only palette, independent of the app theme ---------- */
+@theme inline {
+    --font-display: var(--font-inter-tight);
+    --color-mk-bg: #fbfcfe;
+    --color-mk-ink: #04192b;
+    --color-mk-muted: #4a6378;
+    --color-mk-soft: #8197aa;
+    --color-mk-line: #e2e9f1;
+    --color-mk-tint: #eef4fd;
+    --color-mk-blue: #2563eb;
+    --color-mk-deep: #1d2bd8;
+}
+
+@layer components {
+  .mk {
+    color-scheme: light;
+    background: var(--color-mk-bg);
+    color: var(--color-mk-ink);
+  }
+  .mk-display {
+    font-family: var(--font-inter-tight), var(--font-sans), sans-serif;
+    font-weight: 400;
+    letter-spacing: -0.045em;
+    line-height: 1;
+  }
+  .mk-cta {
+    background-image: linear-gradient(180deg, #3b82f6 0%, #1d2bd8 100%);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.25),
+      0 1px 3px -1px rgb(29 43 216 / 0.3),
+      0 4px 12px -3px rgb(29 43 216 / 0.25),
+      0 14px 40px -6px rgb(37 99 235 / 0.3);
+    transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+  }
+  .mk-cta:hover { filter: brightness(1.08); transform: translateY(-1px); }
+  .mk-card {
+    background: #fff;
+    border: 1px solid var(--color-mk-line);
+    box-shadow: 0 1px 2px rgb(4 25 43 / 0.04), 0 12px 32px -16px rgb(4 25 43 / 0.12);
+  }
+  .mk-glow {
+    position: relative;
+    isolation: isolate;
+  }
+  .mk-glow::before {
+    content: "";
+    position: absolute;
+    inset: -28px -40px;
+    z-index: -1;
+    border-radius: 999px;
+    background: radial-gradient(closest-side, rgb(56 189 248 / 0.35), transparent);
+    filter: blur(8px);
+  }
+  .mk-grid-bg {
+    background-image:
+      linear-gradient(to right, rgb(4 25 43 / 0.045) 1px, transparent 1px),
+      linear-gradient(to bottom, rgb(4 25 43 / 0.045) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: radial-gradient(ellipse at 50% 0%, black 20%, transparent 70%);
+  }
+}
+
+/* Content is visible without JS or scroll-timeline support; capable browsers fade sections in */
+@media (prefers-reduced-motion: no-preference) {
+  @supports (animation-timeline: view()) {
+    .mk-reveal {
+      animation: mk-rise linear both;
+      animation-timeline: view();
+      animation-range: entry 0% entry 35%;
+    }
+  }
+}
+@keyframes mk-rise {
+  from { opacity: 0; transform: translateY(28px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}

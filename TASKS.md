@@ -195,6 +195,12 @@ Design: `Platform design - Multi level flow, super admin, verder, partner.docx` 
 - [ ] Support access with tenant consent (time-limited "Login as", banner, audit)
 - [ ] Vendor / salesperson commission report (manual payout)
 
+### Public website — homepage + SEO — done 2026-10-24
+- [x] New homepage (`app/page.tsx`, `components/marketing/`): hero, product mockups drawn in HTML/SVG, getting-started steps, feature rows (CRM, GST billing, bookings, stock), AI assistant, before/after by industry, security, FAQ, module list with "Soon" badges for modules not built yet
+- [x] SEO: metadata + Open Graph/Twitter in the root layout, canonical URLs, generated OG/Twitter/Apple images, `icon.svg`, `robots.txt`, `sitemap.xml`, web manifest, JSON-LD (Organization, WebSite, SoftwareApplication, FAQPage), titles for /login and /signup
+- [x] Private areas (`/app`, `/console`, `/d`, `/pay`, `/print`, `/invite`, …) blocked in robots.txt and sent `X-Robots-Tag: noindex`
+- To do before go-live: set `NEXT_PUBLIC_SITE_URL` to the production domain (canonical, sitemap and OG URLs use it); move a module's badge from "Soon" to live in `components/marketing/content.ts` as each ships; add Privacy and Terms pages and link them in the footer
+
 ### Later (design v2 §13)
 - [ ] White-label partner (panel, domains, price book, monthly billing), vendor KYC + payouts, full theming, dedicated-DB tier, visual workflow builder
 
