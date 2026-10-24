@@ -13,6 +13,7 @@ import { useAuth } from "@/lib/auth"
 import { useApi } from "@/lib/use-api"
 import type { Catalog, SettingRow } from "@/lib/console"
 import type { PlanLimits } from "@/lib/types"
+import { GST_STATES } from "@/lib/format"
 
 type Announcement = { text: string; tone: "info" | "warning"; until: string | null } | null
 
@@ -201,6 +202,49 @@ export default function ConsoleSettingsPage() {
                     value={value.until ? value.until.slice(0, 10) : ""}
                     onChange={(e) => update({ until: e.target.value ? new Date(`${e.target.value}T23:59:59+05:30`).toISOString() : null })}
                   />
+                </Field>
+              </div>
+            )
+          }}
+        </SettingCard>
+
+        <SettingCard
+          key={`billing-${v}`}
+          title="AHEAD billing details"
+          description="Printed on AHEAD's GST invoices to clients. The state code decides CGST+SGST vs IGST. Confirm SAC and rate with the CA."
+          keys={["ahead.billing", "onboarding.unpaid_cancel_days"]}
+          {...common}
+        >
+          {(d, set) => {
+            const b = d["ahead.billing"] as { legalName: string; gstin: string; stateCode: string; address: string; sac: string; gstRateBp: number }
+            const update = (patch: Partial<typeof b>) => set("ahead.billing", { ...b, ...patch })
+            return (
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Legal name">
+                  <Input value={b.legalName} onChange={(e) => update({ legalName: e.target.value })} />
+                </Field>
+                <Field label="GSTIN">
+                  <Input value={b.gstin} maxLength={15} onChange={(e) => update({ gstin: e.target.value.toUpperCase() })} />
+                </Field>
+                <Field label="State">
+                  <NativeSelect value={b.stateCode} onChange={(e) => update({ stateCode: e.target.value })}>
+                    <option value="">Not set — invoicing is blocked</option>
+                    {GST_STATES.map(([code, name]) => (
+                      <option key={code} value={code}>{name}</option>
+                    ))}
+                  </NativeSelect>
+                </Field>
+                <Field label="Address">
+                  <Input value={b.address} onChange={(e) => update({ address: e.target.value })} />
+                </Field>
+                <Field label="SAC code">
+                  <Input value={b.sac} maxLength={8} onChange={(e) => update({ sac: e.target.value })} />
+                </Field>
+                <Field label="GST rate (%)">
+                  <Input type="number" min={0} max={28} value={String(b.gstRateBp / 100)} onChange={(e) => update({ gstRateBp: Math.round(num(e.target.value) * 100) })} />
+                </Field>
+                <Field label="Unpaid order lapses after (days)" hint="Sales-created clients that never pay">
+                  <Input type="number" min={1} max={60} value={String(d["onboarding.unpaid_cancel_days"])} onChange={(e) => set("onboarding.unpaid_cancel_days", num(e.target.value))} />
                 </Field>
               </div>
             )

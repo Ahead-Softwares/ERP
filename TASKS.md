@@ -168,10 +168,23 @@ Design: `Platform design - Multi level flow, super admin, verder, partner.docx` 
 - [x] Tests (46/46 green): extensions, scope 404, versioned prices, plan module validation, coupons, Console-user rules; screens checked in the browser
 - Not yet: MRR on the dashboard and payments screens (need Step 4); free-tier flags per module are not editable from the UI yet
 
-### Step 4 — Assisted onboarding + platform billing (R5–R7)
-- [ ] New client from the Console (sales/vendor acquisition), `incomplete` subscription state, discount approval
-- [ ] Razorpay payment link + signed, idempotent webhook; offline payment; AHEAD GST invoice (number on capture); credit notes
-- [ ] Renewal + dunning job, trial reminder job (notification_log de-dup), 14-day auto-cancel
+### Step 4a — Paid onboarding from the Console — done 2026-10-24
+- [x] `incomplete` tenant/subscription status: workspace exists, every module closed until the first payment; `incomplete → active` on payment, `incomplete → closed` when unpaid
+- [x] Platform tables (closed to `app_user`): `platform_orders`, `platform_payments`, `platform_invoices`, `platform_sequences`
+- [x] Quote: plan + add-on modules + extra users for the cycle from the active price list, sales discount, coupon, GST (CGST+SGST in AHEAD's state, else IGST), discount split pro-rata across lines
+- [x] New client (Console → Clients → New client): owner by email (existing account or new, OTP login), acquisition = the sales user / vendor, no trial registry, live price panel
+- [x] Discount above the role limit (`sales.discount_limits`) → order needs approval (`platform.discount.approve`); the creator cannot approve their own discount
+- [x] Record offline payment (bank transfer, UPI, cheque, cash; full amount only) → AHEAD GST invoice `AHD/26-27/000001` numbered at payment, subscription active with cycle, add-ons and extra users (extra users raise the user limit), coupon redeemed
+- [x] Console screens: New client, Payments (orders by status), order detail (approve, record payment, cancel), printable AHEAD invoice; orders on the client detail; dashboard tiles for awaiting payment / approvals
+- [x] Settings: AHEAD billing details (legal name, GSTIN, state, address, SAC, GST rate) — invoicing is blocked until the state is set; unpaid order lapse days
+- [x] Client ERP shows "workspace ready, modules open after payment" while `incomplete`
+- [x] Tests (6 new, suite green): allocation, seller state required, approval rules, full-amount rule, intra/inter-state GST, invoice numbering, entitlements after payment
+- To do before go-live: set AHEAD's real billing details in Console → Settings; CA to confirm SAC and rate
+
+### Step 4b — Online payments and renewals
+- [ ] Razorpay payment link + signed, idempotent webhook (`webhook_events`), using `capturePayment()`; dev "test payment" until keys are added
+- [ ] Renewal orders + dunning job, trial reminder job (notification_log de-dup), lapse job for unpaid orders (→ `unpaid_cancelled`)
+- [ ] Credit notes for refunds
 
 ### Step 5 — Support and reports
 - [ ] Support access with tenant consent (time-limited "Login as", banner, audit)

@@ -43,6 +43,7 @@ enum OtpPurpose {
 }
 
 enum TenantStatus {
+  incomplete // created by sales/vendor, waiting for the first payment (design v2)
   trialing
   active
   past_due
@@ -408,6 +409,112 @@ model GracePeriod {
 
   @@index([tenantId, createdAt])
   @@map("grace_periods")
+}
+
+enum PlatformOrderStatus {
+  pending_approval // discount above the creator's limit; a Super Admin must approve
+  awaiting_payment
+  paid
+  cancelled
+
+  @@map("platform_order_status")
+}
+
+enum PlatformPaymentMethod {
+  bank_transfer
+  upi
+  cheque
+  cash
+  razorpay
+
+  @@map("platform_payment_method")
+}
+
+/// Platform table: what AHEAD sells to a client (plan + add-ons + users), priced and taxed once.
+model PlatformOrder {
+  id               String              @id @default(uuid(7)) @db.Uuid
+  tenantId         String              @map("tenant_id") @db.Uuid
+  kind             String              @default("fresh") // fresh | renewal | upgrade
+  status           PlatformOrderStatus @default(awaiting_payment)
+  planId           String              @map("plan_id") @db.Uuid
+  cycle            BillingCycle
+  items            Json // [{ itemType, itemRef, priceId, quantity, unitPaise, amountPaise, description }]
+  listPaise        BigInt              @map("list_paise")
+  discountBp       Int                 @default(0) @map("discount_bp") // sales discount, basis points
+  couponCode       String?             @map("coupon_code")
+  discountPaise    BigInt              @default(0) @map("discount_paise") // sales discount + coupon
+  taxablePaise     BigInt              @map("taxable_paise")
+  cgstPaise        BigInt              @default(0) @map("cgst_paise")
+  sgstPaise        BigInt              @default(0) @map("sgst_paise")
+  igstPaise        BigInt              @default(0) @map("igst_paise")
+  totalPaise       BigInt              @map("total_paise")
+  billTo           Json                @map("bill_to") // name, gstin, stateCode, address at order time
+  createdBy        String              @map("created_by") @db.Uuid
+  approvedBy       String?             @map("approved_by") @db.Uuid
+  approvedAt       DateTime?           @map("approved_at") @db.Timestamptz
+  cancelledReason  String?             @map("cancelled_reason")
+  expiresAt        DateTime            @map("expires_at") @db.Timestamptz
+  paidAt           DateTime?           @map("paid_at") @db.Timestamptz
+  createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz
+
+  payments PlatformPayment[]
+  invoice  PlatformInvoice?
+
+  @@index([tenantId, createdAt])
+  @@index([status])
+  @@map("platform_orders")
+}
+
+/// Platform table: money AHEAD received. Offline payments are recorded by Finance; gateway ones arrive by webhook.
+model PlatformPayment {
+  id               String                @id @default(uuid(7)) @db.Uuid
+  orderId          String                @map("order_id") @db.Uuid
+  tenantId         String                @map("tenant_id") @db.Uuid
+  method           PlatformPaymentMethod
+  amountPaise      BigInt                @map("amount_paise")
+  reference        String?
+  gatewayPaymentId String?               @unique @map("gateway_payment_id")
+  receivedAt       DateTime              @map("received_at") @db.Timestamptz
+  recordedBy       String?               @map("recorded_by") @db.Uuid
+  createdAt        DateTime              @default(now()) @map("created_at") @db.Timestamptz
+
+  order PlatformOrder @relation(fields: [orderId], references: [id])
+
+  @@index([tenantId])
+  @@map("platform_payments")
+}
+
+/// Platform table: AHEAD's GST invoice to a client. Numbered only when paid; never edited.
+model PlatformInvoice {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  number       String   @unique // AHD/26-27/000123
+  fy           String
+  tenantId     String   @map("tenant_id") @db.Uuid
+  orderId      String   @unique @map("order_id") @db.Uuid
+  seller       Json // AHEAD billing details at issue time
+  billTo       Json     @map("bill_to")
+  lines        Json // [{ description, sac, quantity, taxablePaise, cgstPaise, sgstPaise, igstPaise, totalPaise }]
+  taxablePaise BigInt   @map("taxable_paise")
+  cgstPaise    BigInt   @map("cgst_paise")
+  sgstPaise    BigInt   @map("sgst_paise")
+  igstPaise    BigInt   @map("igst_paise")
+  totalPaise   BigInt   @map("total_paise")
+  issuedAt     DateTime @default(now()) @map("issued_at") @db.Timestamptz
+
+  order PlatformOrder @relation(fields: [orderId], references: [id])
+
+  @@index([tenantId])
+  @@map("platform_invoices")
+}
+
+/// Platform table: AHEAD's own document number series per financial year.
+model PlatformSequence {
+  docType String @map("doc_type")
+  fy      String
+  nextNo  Int    @default(1) @map("next_no")
+
+  @@id([docType, fy])
+  @@map("platform_sequences")
 }
 
 /// Platform table (no RLS, never visible to tenants): who brought the tenant in.

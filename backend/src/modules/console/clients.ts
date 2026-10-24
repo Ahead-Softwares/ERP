@@ -5,6 +5,7 @@ import type { ConsoleCtx } from '../../kernel/context';
 import { audit } from '../audit/service';
 import { cache } from '../../kernel/cache';
 import { scopedTenantFilter } from './service';
+import { clientOrders } from '../platformBilling/orders';
 
 // Console → Clients (design v2 §3). Only account metadata: plan, status, usage counts and who
 // brought the client in. Business records (customers, invoices, salaries) are never read here.
@@ -85,6 +86,7 @@ export async function clientDetail(ctx: ConsoleCtx, id: string) {
       take: 20,
     }),
   ]);
+  const orders = await clientOrders(id);
   const plan = subscription ? await tx.plan.findUnique({ where: { id: subscription.planId }, select: { key: true, name: true, limits: true } }) : null;
   const peopleIds = [acquisition?.acquiredByUserId, acquisition?.changedBy, ...extensions.map((e) => e.grantedBy), ...history.map((h) => h.actorId)].filter(Boolean) as string[];
   const people = new Map((await tx.user.findMany({ where: { id: { in: [...new Set(peopleIds)] } }, select: { id: true, name: true, email: true } })).map((u) => [u.id, u]));
@@ -116,6 +118,7 @@ export async function clientDetail(ctx: ConsoleCtx, id: string) {
       changeReason: acquisition.changeReason, changedBy: acquisition.changedBy ? people.get(acquisition.changedBy)?.name ?? null : null,
     },
     extensions: extensions.map((e) => ({ ...e, grantedBy: people.get(e.grantedBy)?.name ?? null })),
+    orders,
     history: history.map((h) => ({ id: h.id, action: h.action, at: h.at, actor: h.actorId ? people.get(h.actorId)?.name ?? null : null, after: h.after })),
   };
 }

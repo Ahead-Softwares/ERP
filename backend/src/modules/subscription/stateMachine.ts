@@ -17,9 +17,13 @@ export type SubscriptionEvent =
   | 'period_end_cancel'
   | 'owner_closed'
   | 'owner_restored'
-  | 'purge';
+  | 'purge'
+  | 'unpaid_cancelled';
 
 const TRANSITIONS: Record<string, TenantStatus> = {
+  // design v2: sales-created clients wait for the first payment; nothing to lose if it never comes
+  'incomplete:payment_captured': 'active',
+  'incomplete:unpaid_cancelled': 'closed',
   'trialing:payment_captured': 'active',
   'trialing:trial_expired': 'free',
   'active:renewal_succeeded': 'active',

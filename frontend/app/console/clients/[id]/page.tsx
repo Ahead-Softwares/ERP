@@ -16,7 +16,8 @@ import { Field, FormError, NativeSelect } from "@/components/form"
 import { api, ApiError, errorMessage } from "@/lib/api"
 import { useAuth } from "@/lib/auth"
 import { useApi } from "@/lib/use-api"
-import { formatDate, formatDateTime } from "@/lib/format"
+import { formatDate, formatDateTime, formatPaise } from "@/lib/format"
+import { OrderBadge } from "@/components/order-badge"
 import { ACQUIRER_LABEL, METHOD_LABEL, SOURCE_LABEL, STATUS_LABEL, type AcquiredByType, type AcquisitionMethod, type ClientDetail, type ConsoleMember } from "@/lib/console"
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
@@ -273,6 +274,28 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
             ))}
           </CardContent>
         </Card>
+
+        {c.orders.length > 0 && (
+          <Card className="lg:col-span-3">
+            <CardHeader>
+              <CardTitle>Orders</CardTitle>
+              <CardDescription>What this client bought from AHEAD</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-2 text-sm">
+              {c.orders.map((o) => (
+                <div key={o.id} className="flex flex-wrap items-center justify-between gap-2">
+                  <Link href={`/console/payments/${o.id}`} className="hover:underline">
+                    {formatDate(o.createdAt)} · {o.cycle} · {formatPaise(o.totalPaise)}
+                  </Link>
+                  <span className="flex items-center gap-2">
+                    {o.invoice && <span className="font-mono text-xs">{o.invoice.number}</span>}
+                    <OrderBadge status={o.status} />
+                  </span>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
 
         <Card className="lg:col-span-3">
           <CardHeader>

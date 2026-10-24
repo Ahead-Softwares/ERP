@@ -34,6 +34,19 @@ export const SETTINGS = {
     schema: z.record(z.string(), z.number().min(0).max(100)),
     default: { console_sales_executive: 10, console_sales_manager: 20, vendor: 0 } as Record<string, number>,
   }),
+  'ahead.billing': def({
+    description: "AHEAD's own details printed on invoices to clients (SAC and GST rate: confirm with the CA)",
+    schema: z.object({
+      legalName: z.string().trim().max(120),
+      gstin: z.string().trim().max(15),
+      stateCode: z.string().regex(/^(\d{2})?$/, 'Two-digit GST state code'),
+      address: z.string().trim().max(300),
+      sac: z.string().trim().max(8),
+      gstRateBp: z.number().int().min(0).max(2800),
+    }),
+    default: { legalName: 'AHEAD Software', gstin: '', stateCode: '', address: '', sac: '998314', gstRateBp: 1800 },
+  }),
+  'onboarding.unpaid_cancel_days': def({ description: 'Days a sales-created client may stay unpaid before the order lapses', schema: z.number().int().min(1).max(60), default: 14 }),
   'announcement.banner': def({
     description: 'One line shown on top of every client workspace (empty = none)',
     schema: z.object({ text: z.string().trim().max(200), tone: z.enum(['info', 'warning']), until: z.string().datetime().nullable() }).nullable(),

@@ -2,7 +2,9 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { Building2 } from "lucide-react"
+import { Building2, Plus } from "lucide-react"
+import { buttonVariants } from "@/components/ui/button"
+import { useAuth } from "@/lib/auth"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -19,10 +21,21 @@ export default function ClientsPage() {
   const [status, setStatus] = React.useState("")
   const q = useDebounced(search)
   const list = useList<ClientRow>("/console/tenants", { search: q, status })
+  const { canConsole } = useAuth()
 
   return (
     <>
-      <PageHeader title="Clients" description="Account and plan details only — business records stay private to each client." />
+      <PageHeader
+        title="Clients"
+        description="Account and plan details only — business records stay private to each client."
+        actions={
+          canConsole("platform.tenant.create") && (
+            <Link href="/console/clients/new" className={buttonVariants()}>
+              <Plus /> New client
+            </Link>
+          )
+        }
+      />
       <div className="mb-4 flex flex-wrap gap-2">
         <SearchInput value={search} onChange={setSearch} placeholder="Search by name or GSTIN" className="min-w-56 flex-1" />
         <NativeSelect className="w-44" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">

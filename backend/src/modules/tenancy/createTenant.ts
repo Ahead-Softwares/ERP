@@ -39,6 +39,9 @@ export interface CreateTenantInput {
   /** AHEAD's own workspace (uses its own CRM to sell) */
   isInternal?: boolean;
   gstin?: string;
+  billingStateCode?: string;
+  /** design v2: sales/vendor onboarding — no trial, modules open after the first payment */
+  paidOnboarding?: { planId: string; cycle: 'monthly' | 'yearly' };
 }
 
 /** End of the trial's last day in IST (e.g. 2026-11-06T18:29:59Z). */
@@ -56,8 +59,7 @@ export async function createTenant(input: CreateTenantInput) {
   if (!template) throw new AppError('VALIDATION_FAILED', 'Unknown industry.', { fields: { industryKey: 'Unknown industry' } });
   const acquisition: AcquisitionInput = input.acquisition ?? { byType: 'self', method: 'signup' };
   const source = validateAcquisition(acquisition);
-  // Assisted, paid-up-front onboarding (no trial) arrives with the Console in Step 4
-  const onboardingType = 'trial' as const;
+  const onboardingType = input.paidOnboarding ? ('direct_paid' as const) : ('trial' as const);
 
   // Resolve owner identity
   let user;
@@ -96,13 +98,14 @@ export async function createTenant(input: CreateTenantInput) {
       name: input.businessName,
       industryKey: template.key,
       templateVersion: template.version,
-      status: 'trialing',
+      status: onboardingType === 'trial' ? 'trialing' : 'incomplete',
       source,
       onboardingType,
       isInternal: !!input.isInternal,
       partnerId: input.partnerId,
       billingOwner: input.partnerId ? 'partner' : 'self',
       gstin,
+      billingStateCode: input.billingStateCode,
       ownerUserId: user.id,
     },
   });
@@ -116,11 +119,18 @@ export async function createTenant(input: CreateTenantInput) {
     },
   });
 
-  const [trialPlanKey, trialDays] = await Promise.all([getSetting('trial.plan_key'), getSetting('trial.days')]);
-  const trialPlan = await tx.plan.findUniqueOrThrow({ where: { key: trialPlanKey } });
-  const subscription = await tx.subscription.create({
-    data: { tenantId: tenant.id, planId: trialPlan.id, status: 'trialing', trialEndsAt: trialEnd(now, trialDays) },
-  });
+  let subscription;
+  if (input.paidOnboarding) {
+    subscription = await tx.subscription.create({
+      data: { tenantId: tenant.id, planId: input.paidOnboarding.planId, cycle: input.paidOnboarding.cycle, status: 'incomplete' },
+    });
+  } else {
+    const [trialPlanKey, trialDays] = await Promise.all([getSetting('trial.plan_key'), getSetting('trial.days')]);
+    const trialPlan = await tx.plan.findUniqueOrThrow({ where: { key: trialPlanKey } });
+    subscription = await tx.subscription.create({
+      data: { tenantId: tenant.id, planId: trialPlan.id, status: 'trialing', trialEndsAt: trialEnd(now, trialDays) },
+    });
+  }
 
   const ownerRole = await tx.role.findFirstOrThrow({ where: { tenantId: null, key: 'owner' } });
   await tx.tenantMember.create({

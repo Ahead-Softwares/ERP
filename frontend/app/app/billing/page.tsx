@@ -28,6 +28,7 @@ interface Subscription {
 }
 
 const STATUS_LABEL: Record<TenantStatus, string> = {
+  incomplete: "Awaiting payment",
   trialing: "Free trial",
   active: "Active",
   past_due: "Payment due",

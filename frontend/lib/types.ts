@@ -13,7 +13,7 @@ export type ModuleKey =
   | "ai"
   | "automation"
 
-export type TenantStatus = "trialing" | "active" | "past_due" | "free" | "closed" | "purged"
+export type TenantStatus = "incomplete" | "trialing" | "active" | "past_due" | "free" | "closed" | "purged"
 export type Scope = "own" | "team" | "branch" | "all"
 
 export interface ModuleEntitlement {

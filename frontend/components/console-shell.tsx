@@ -10,7 +10,7 @@ import { useAuth } from "@/lib/auth"
 import { cn } from "@/lib/utils"
 
 // design v2: the AHEAD team's Console. Items show only for roles that have the permission;
-// screens marked "Soon" arrive in Step 4 (payments).
+// every screen is live as of Step 4.
 interface ConsoleNav {
   href: string
   label: string
@@ -23,7 +23,7 @@ const CONSOLE_NAV: ConsoleNav[] = [
   { href: "/console", label: "Dashboard", icon: LayoutDashboard, permission: "platform.dashboard.view", ready: true },
   { href: "/console/clients", label: "Clients", icon: Building2, permission: "platform.tenant.view", ready: true },
   { href: "/console/plans", label: "Plans & prices", icon: Tags, permission: "platform.plan.view", ready: true },
-  { href: "/console/payments", label: "Payments", icon: CreditCard, permission: "platform.payment.view", ready: false },
+  { href: "/console/payments", label: "Payments", icon: CreditCard, permission: "platform.payment.view", ready: true },
   { href: "/console/team", label: "Console users", icon: Users, permission: "platform.member.view", ready: true },
   { href: "/console/settings", label: "Settings", icon: Settings2, permission: "platform.setting.view", ready: true },
   { href: "/console/audit", label: "Audit log", icon: ScrollText, permission: "platform.audit.view", ready: true },
@@ -59,11 +59,11 @@ export function ConsoleShell({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = React.useState(false)
   return (
     <div className="flex min-h-svh flex-col">
-      <div className="bg-foreground px-4 py-1.5 text-center text-xs text-background">
+      <div className="bg-foreground px-4 py-1.5 text-center text-xs text-background print:hidden">
         AHEAD Console — client business data is never shown here without the client&apos;s consent.
       </div>
       <div className="flex flex-1">
-        <aside className="sticky top-0 hidden h-svh w-64 shrink-0 flex-col border-r bg-sidebar lg:flex">
+        <aside className="sticky top-0 hidden h-svh w-64 shrink-0 flex-col border-r bg-sidebar lg:flex print:hidden">
           <div className="border-b p-3">
             <WorkspaceSwitcher />
           </div>
@@ -86,7 +86,7 @@ export function ConsoleShell({ children }: { children: React.ReactNode }) {
         )}
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b bg-background/90 px-4 backdrop-blur">
+          <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b bg-background/90 px-4 backdrop-blur print:hidden">
             <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMobileOpen(true)} aria-label="Open navigation">
               <Menu className="size-4" />
             </Button>

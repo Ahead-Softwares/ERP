@@ -243,6 +243,11 @@ function Banners() {
           )}
         </div>
       )}
+      {sub?.status === "incomplete" && (
+        <div className="bg-primary px-4 py-2 text-center text-sm text-primary-foreground">
+          Your workspace is ready. Modules open as soon as your payment to AHEAD is received — set up your team and settings meanwhile.
+        </div>
+      )}
       {sub?.status === "past_due" && (
         <div className="bg-destructive px-4 py-2 text-center text-sm text-white">
           Your last payment failed. Update your payment method to keep paid modules active.

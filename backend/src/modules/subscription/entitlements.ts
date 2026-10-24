@@ -35,6 +35,7 @@ export function resolveEntitlements(
   for (const m of MODULES) {
     let e: ModuleEntitlement;
     if (status === 'trialing') e = { status: 'active', tier: 'full' };
+    else if (status === 'incomplete') e = { status: 'inactive', tier: 'basic' }; // modules open after the first payment
     else if (status === 'closed' || status === 'purged') e = { status: everUsed.has(m.key) ? 'read_only' : 'inactive', tier: 'basic' };
     else if (PAID_STATES.includes(status) && fullModules.has(m.key)) e = { status: 'active', tier: 'full' };
     else if (freeTier.has(m.key)) e = { status: 'active', tier: 'basic' };
@@ -46,9 +47,21 @@ export function resolveEntitlements(
 
 export function resolveLimits(status: TenantStatus, planLimits: PlanLimits, defaults: { trial: PlanLimits; free: PlanLimits }): PlanLimits {
   if (status === 'trialing') return defaults.trial;
+  if (status === 'incomplete') return planLimits; // the plan being bought, so the owner can invite the team
   if (PAID_STATES.includes(status)) return planLimits;
   return defaults.free;
 }
+
+/** Extra users bought on top of the plan (subscription items priced as extra_user). */
+async function extraUsers(client: Pick<typeof prisma, 'price'>, items: { priceId: string; quantity: number }[]) {
+  if (!items.length) return 0;
+  const prices = await client.price.findMany({ where: { id: { in: items.map((i) => i.priceId) }, itemType: 'extra_user' }, select: { id: true } });
+  const ids = new Set(prices.map((p) => p.id));
+  return items.filter((i) => ids.has(i.priceId)).reduce((n, i) => n + i.quantity, 0);
+}
+
+export const withExtraUsers = (limits: PlanLimits, extra: number, status: TenantStatus) =>
+  extra && (PAID_STATES.includes(status) || status === 'incomplete') ? { ...limits, users: limits.users + extra } : limits;
 
 async function limitDefaults() {
   const [catalog, trial] = await Promise.all([getCatalog(), getSetting('trial.limits')]);
@@ -76,7 +89,7 @@ export async function persistEntitlements(tenantId: string) {
   const everUsed = new Set(rows.filter((r) => r.activatedAt).map((r) => r.moduleKey));
   const { catalog, defaults } = await limitDefaults();
   const resolved = resolveEntitlements(sub.status, full, everUsed, catalog.freeTierModules);
-  const limits = resolveLimits(sub.status, plan.limits as unknown as PlanLimits, defaults);
+  const limits = withExtraUsers(resolveLimits(sub.status, plan.limits as unknown as PlanLimits, defaults), await extraUsers(tx, sub.items), sub.status);
   const now = new Date();
 
   for (const key of MODULE_KEYS) {
@@ -110,7 +123,7 @@ export function getEntitlements(tenantId: string): Promise<EntitlementSnapshot> 
       planKey: plan.key,
       trialEndsAt: sub.trialEndsAt,
       currentPeriodEnd: sub.currentPeriodEnd,
-      limits: resolveLimits(sub.status, plan.limits as unknown as PlanLimits, (await limitDefaults()).defaults),
+      limits: withExtraUsers(resolveLimits(sub.status, plan.limits as unknown as PlanLimits, (await limitDefaults()).defaults), await extraUsers(prisma, sub.items), sub.status),
       modules,
     };
   });

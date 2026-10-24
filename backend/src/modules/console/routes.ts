@@ -11,6 +11,8 @@ import { consoleAccess, dashboard } from './service';
 import { assertClientInScope, clientDetail, extendClient, listClients } from './clients';
 import { catalogAdmin, createCoupon, endCoupon, setPrice, updatePlan } from './catalogAdmin';
 import { addMember, consoleRoles, listMembers, updateMember } from './members';
+import { approveOrder, cancelOrder, capturePayment, createPaidClient, quote } from '../platformBilling/service';
+import { invoiceDetail, listOrders, orderDetail } from '../platformBilling/orders';
 
 // Console API (design v2). Every route: Console token + one platform.* permission.
 
@@ -29,7 +31,7 @@ router.get('/dashboard', requirePlatformPermission('platform.dashboard.view'), c
 // ── Clients ──
 const ClientQuery = ListQuery.extend({
   search: z.string().trim().max(80).optional(),
-  status: z.enum(['trialing', 'active', 'past_due', 'free', 'closed', 'purged']).optional(),
+  status: z.enum(['incomplete', 'trialing', 'active', 'past_due', 'free', 'closed', 'purged']).optional(),
 });
 
 router.get('/tenants', requirePlatformPermission('platform.tenant.view'), validate(ClientQuery, 'query'), consoleTx(async (req, res) => {
@@ -174,6 +176,82 @@ router.get('/audit', requirePlatformPermission('platform.audit.view'), validate(
     data: pageRows.map((r) => ({ id: r.id, action: r.action, entity: r.entity, entityId: r.entityId, before: r.before, after: r.after, at: r.at, actorName: r.actorId ? names.get(r.actorId) ?? null : 'System' })),
     nextCursor: rows.length > q.limit ? pageRows[pageRows.length - 1].id : null,
   });
+}));
+
+// ── New paid client (design v2 §4B) ──
+const GstState = z.string().regex(/^\d{2}$/, 'Two-digit GST state code');
+const OrderInput = z.object({
+  planKey: z.string().max(40),
+  cycle: z.enum(['monthly', 'yearly']),
+  addOns: z.array(z.string().max(40)).max(20).default([]),
+  extraUsers: z.number().int().min(0).max(500).default(0),
+  discountPercent: z.number().min(0).max(100).default(0),
+  couponCode: z.string().trim().max(20).nullish(),
+});
+
+const QuoteBody = OrderInput.extend({ stateCode: GstState });
+
+router.post('/quote', requirePlatformPermission('platform.tenant.create'), validate(QuoteBody), consoleTx(async (req, res) => {
+  const b = req.body as z.infer<typeof QuoteBody>;
+  const role = await db().role.findUniqueOrThrow({ where: { id: ctx(req).roleId }, select: { key: true } });
+  res.json(await quote({ ...b, billTo: { name: '', stateCode: b.stateCode } }, { actorRoleKey: role.key }));
+}));
+
+const NewClientBody = z.object({
+  business: z.object({
+    name: z.string().trim().min(2).max(120),
+    industryKey: z.string().max(40),
+    gstin: z.string().trim().regex(/^[0-9A-Z]{15}$/i, 'GSTIN has 15 letters and digits').nullish().or(z.literal('')),
+    stateCode: GstState,
+    address: z.string().trim().max(300).nullish(),
+  }),
+  owner: z.object({ name: z.string().trim().min(2).max(100), email: z.string().trim().email(), mobile: z.string().trim().min(8).max(20) }),
+  order: OrderInput,
+});
+
+router.post('/clients', requirePlatformPermission('platform.tenant.create'), validate(NewClientBody), consoleTx(async (req, res) => {
+  res.status(201).json(await createPaidClient(ctx(req), req.body));
+}));
+
+// ── Orders, payments and AHEAD invoices ──
+const OrderQuery = ListQuery.extend({
+  status: z.enum(['pending_approval', 'awaiting_payment', 'paid', 'cancelled']).optional(),
+  tenantId: z.string().uuid().optional(),
+});
+
+router.get('/orders', requirePlatformPermission('platform.payment.view'), validate(OrderQuery, 'query'), consoleTx(async (req, res) => {
+  res.json(await listOrders(ctx(req), req.query as unknown as z.infer<typeof OrderQuery>));
+}));
+
+router.get('/orders/:id', requirePlatformPermission('platform.payment.view'), validate(IdParam, 'params'), consoleTx(async (req, res) => {
+  res.json(await orderDetail(ctx(req), String(req.params.id)));
+}));
+
+router.post('/orders/:id/approve', requirePlatformPermission('platform.discount.approve'), validate(IdParam, 'params'), consoleTx(async (req, res) => {
+  await approveOrder(ctx(req), String(req.params.id));
+  res.json(await orderDetail(ctx(req), String(req.params.id)));
+}));
+
+router.post('/orders/:id/cancel', requirePlatformPermission('platform.payment.approve'), validate(IdParam, 'params'), validate(z.object({ reason: z.string().trim().min(5).max(300) })), consoleTx(async (req, res) => {
+  await cancelOrder(String(req.params.id), req.body.reason);
+  res.json(await orderDetail(ctx(req), String(req.params.id)));
+}));
+
+const OfflinePayment = z.object({
+  method: z.enum(['bank_transfer', 'upi', 'cheque', 'cash']),
+  amountPaise: z.number().int().positive(),
+  reference: z.string().trim().min(3, 'UTR, cheque or receipt number').max(80),
+  receivedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD'),
+});
+
+router.post('/orders/:id/payments', requirePlatformPermission('platform.payment.create'), validate(IdParam, 'params'), validate(OfflinePayment), consoleTx(async (req, res) => {
+  const b = req.body as z.infer<typeof OfflinePayment>;
+  const out = await capturePayment(String(req.params.id), { method: b.method, amountPaise: b.amountPaise, reference: b.reference, receivedAt: new Date(`${b.receivedOn}T12:00:00+05:30`), recordedBy: ctx(req).userId });
+  res.status(201).json({ invoiceId: out.invoice.id, invoiceNumber: out.invoice.number });
+}));
+
+router.get('/invoices/:id', requirePlatformPermission('platform.payment.view'), validate(IdParam, 'params'), consoleTx(async (req, res) => {
+  res.json(await invoiceDetail(ctx(req), String(req.params.id)));
 }));
 
 export default router;

@@ -91,10 +91,11 @@ const DAY = 86_400_000;
 /** GET /console/dashboard — client counts within the caller's scope. */
 export async function dashboard(ctx: ConsoleCtx, now = new Date()) {
   const where = await scopedTenantFilter(ctx);
-  const [byStatus, trialsEndingSoon, newThisWeek] = await Promise.all([
+  const [byStatus, trialsEndingSoon, newThisWeek, pendingApprovals] = await Promise.all([
     prisma.tenant.groupBy({ by: ['status'], where: { ...where, isInternal: false }, _count: true }),
     prisma.tenant.count({ where: { ...where, isInternal: false, subscription: { status: 'trialing', trialEndsAt: { gte: now, lte: new Date(now.getTime() + 7 * DAY) } } } }),
     prisma.tenant.count({ where: { ...where, isInternal: false, createdAt: { gte: new Date(now.getTime() - 7 * DAY) } } }),
+    prisma.platformOrder.count({ where: { status: 'pending_approval', ...(Object.keys(where).length ? { tenantId: { in: (await prisma.tenant.findMany({ where, select: { id: true } })).map((t) => t.id) } } : {}) } }),
   ]);
   const counts = Object.fromEntries(byStatus.map((r) => [r.status, r._count])) as Record<string, number>;
   return {
@@ -106,7 +107,9 @@ export async function dashboard(ctx: ConsoleCtx, now = new Date()) {
       pastDue: counts.past_due ?? 0,
       free: counts.free ?? 0,
       closed: counts.closed ?? 0,
+      awaitingPayment: counts.incomplete ?? 0,
     },
+    pendingApprovals,
     trialsEndingIn7Days: trialsEndingSoon,
     newLast7Days: newThisWeek,
   };

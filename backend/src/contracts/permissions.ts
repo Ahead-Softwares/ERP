@@ -24,6 +24,7 @@ export const PERMISSION_CATALOG: Record<PermissionModule, ResourceDef[]> = {
     { resource: 'setting', label: 'Platform settings', actions: ['view', 'edit'] },
     { resource: 'grace', label: 'Grace periods', actions: ['create'] },
     { resource: 'payment', label: 'Payments & AHEAD invoices', actions: ['view', 'create', 'approve'] },
+    { resource: 'discount', label: "Discounts above a role's limit", actions: ['approve'] },
     { resource: 'commission', label: 'Commission reports', actions: ['view'] },
     { resource: 'support', label: 'Support access', actions: ['create'] },
     { resource: 'member', label: 'Console users', actions: ['view', 'create', 'edit'] },
