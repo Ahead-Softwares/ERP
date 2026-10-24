@@ -20,7 +20,8 @@ app.disable('x-powered-by');
 // Standard middlewares
 app.use(helmet());
 app.use(cors({ origin: env.APP_URL, credentials: true }));
-app.use(express.json({ limit: '1mb' }));
+// Keep the raw bytes too: payment webhooks are signed over the exact body (design v2 Step 4b)
+app.use(express.json({ limit: '1mb', verify: (req, _res, buf) => { (req as unknown as { rawBody: Buffer }).rawBody = buf; } }));
 app.use(cookieParser());
 app.use(requestId);
 

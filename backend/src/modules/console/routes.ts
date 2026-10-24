@@ -13,6 +13,7 @@ import { catalogAdmin, createCoupon, endCoupon, setPrice, updatePlan } from './c
 import { addMember, consoleRoles, listMembers, updateMember } from './members';
 import { approveOrder, cancelOrder, capturePayment, createPaidClient, quote } from '../platformBilling/service';
 import { invoiceDetail, listOrders, orderDetail } from '../platformBilling/orders';
+import { issueCreditNote, sendPaymentLink } from '../platformBilling/online';
 
 // Console API (design v2). Every route: Console token + one platform.* permission.
 
@@ -251,7 +252,23 @@ router.post('/orders/:id/payments', requirePlatformPermission('platform.payment.
 }));
 
 router.get('/invoices/:id', requirePlatformPermission('platform.payment.view'), validate(IdParam, 'params'), consoleTx(async (req, res) => {
-  res.json(await invoiceDetail(ctx(req), String(req.params.id)));
+  const invoice = await invoiceDetail(ctx(req), String(req.params.id));
+  const creditNote = await db().platformCreditNote.findUnique({ where: { invoiceId: invoice.id } });
+  res.json({ ...invoice, creditNote: creditNote && { id: creditNote.id, number: creditNote.number, reason: creditNote.reason, totalPaise: Number(creditNote.totalPaise), issuedAt: creditNote.issuedAt } });
+}));
+
+// ── Step 4b: payment links and refunds ──
+router.post('/orders/:id/payment-link', requirePlatformPermission('platform.payment.view'), validate(IdParam, 'params'), validate(z.object({ resend: z.boolean().default(false) })), consoleTx(async (req, res) => {
+  await orderDetail(ctx(req), String(req.params.id)); // scope check
+  res.json(await sendPaymentLink(String(req.params.id), { resend: req.body.resend }));
+}));
+
+const CreditNoteBody = z.object({ reason: z.string().trim().min(5).max(300), endSubscription: z.boolean().default(false) });
+
+router.post('/invoices/:id/credit-note', requirePlatformPermission('platform.payment.approve'), validate(IdParam, 'params'), validate(CreditNoteBody), consoleTx(async (req, res) => {
+  await invoiceDetail(ctx(req), String(req.params.id)); // scope check
+  const note = await issueCreditNote(ctx(req), String(req.params.id), req.body);
+  res.status(201).json({ id: note.id, number: note.number });
 }));
 
 export default router;

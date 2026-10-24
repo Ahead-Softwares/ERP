@@ -146,6 +146,34 @@ export async function quote(input: QuoteInput, opts: { actorRoleKey?: string } =
   };
 }
 
+export type Quote = Awaited<ReturnType<typeof quote>>;
+
+/** Store a priced order. Platform transaction. */
+export async function saveOrder(q: Quote, o: { tenantId: string; kind: 'fresh' | 'renewal'; billTo: QuoteInput['billTo']; createdBy: string; expiresAt: Date }) {
+  return db().platformOrder.create({
+    data: {
+      tenantId: o.tenantId,
+      kind: o.kind,
+      status: q.needsApproval ? 'pending_approval' : 'awaiting_payment',
+      planId: q.plan.id,
+      cycle: q.cycle,
+      items: q.items as unknown as Prisma.InputJsonValue,
+      listPaise: BigInt(q.listPaise),
+      discountBp: q.discountBp,
+      couponCode: q.couponCode,
+      discountPaise: BigInt(q.discountPaise),
+      taxablePaise: BigInt(q.taxablePaise),
+      cgstPaise: BigInt(q.cgstPaise),
+      sgstPaise: BigInt(q.sgstPaise),
+      igstPaise: BigInt(q.igstPaise),
+      totalPaise: BigInt(q.totalPaise),
+      billTo: o.billTo,
+      createdBy: o.createdBy,
+      expiresAt: o.expiresAt,
+    },
+  });
+}
+
 export interface NewClientInput {
   business: { name: string; industryKey: string; gstin?: string | null; stateCode: string; address?: string | null };
   owner: { name: string; email: string; mobile: string };
@@ -181,27 +209,7 @@ export async function createPaidClient(ctx: ConsoleCtx, input: NewClientInput) {
   });
 
   const cancelDays = await getSetting('onboarding.unpaid_cancel_days');
-  const order = await tx.platformOrder.create({
-    data: {
-      tenantId: created.tenant.id,
-      status: q.needsApproval ? 'pending_approval' : 'awaiting_payment',
-      planId: q.plan.id,
-      cycle: q.cycle,
-      items: q.items as unknown as Prisma.InputJsonValue,
-      listPaise: BigInt(q.listPaise),
-      discountBp: q.discountBp,
-      couponCode: q.couponCode,
-      discountPaise: BigInt(q.discountPaise),
-      taxablePaise: BigInt(q.taxablePaise),
-      cgstPaise: BigInt(q.cgstPaise),
-      sgstPaise: BigInt(q.sgstPaise),
-      igstPaise: BigInt(q.igstPaise),
-      totalPaise: BigInt(q.totalPaise),
-      billTo,
-      createdBy: ctx.userId,
-      expiresAt: new Date(Date.now() + cancelDays * DAY),
-    },
-  });
+  const order = await saveOrder(q, { tenantId: created.tenant.id, kind: 'fresh', billTo, createdBy: ctx.userId, expiresAt: new Date(Date.now() + cancelDays * DAY) });
 
   await sendMessage({
     channel: 'email',
@@ -293,7 +301,8 @@ export async function capturePayment(orderId: string, p: PaymentInput) {
   if (extras.length) {
     await tx.subscriptionItem.createMany({ data: extras.map((i) => ({ subscriptionId: sub.id, priceId: i.priceId, quantity: i.quantity, unitAmountPaise: BigInt(i.unitPaise), startsAt: now })) });
   }
-  await transition(order.tenantId, 'payment_captured', { planId: order.planId, now });
+  // A renewal paid on time extends from the old period end; anything else starts a new period today
+  await transition(order.tenantId, sub.status === 'active' ? 'renewal_succeeded' : 'payment_captured', { planId: order.planId, now });
   if (order.couponCode) await tx.coupon.update({ where: { code: order.couponCode }, data: { redeemed: { increment: 1 } } });
 
   await audit({ tenantId: null, action: 'console.payment_recorded', entity: 'platform_order', entityId: orderId, after: { paymentId: payment.id, method: p.method, amountPaise: p.amountPaise, reference: p.reference, invoice: number } });

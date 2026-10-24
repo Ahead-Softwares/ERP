@@ -455,6 +455,9 @@ model PlatformOrder {
   cancelledReason  String?             @map("cancelled_reason")
   expiresAt        DateTime            @map("expires_at") @db.Timestamptz
   paidAt           DateTime?           @map("paid_at") @db.Timestamptz
+  paymentLinkId    String?             @unique @map("payment_link_id")
+  paymentLinkUrl   String?             @map("payment_link_url")
+  paymentLinkAt    DateTime?           @map("payment_link_at") @db.Timestamptz
   createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz
 
   payments PlatformPayment[]
@@ -505,6 +508,40 @@ model PlatformInvoice {
 
   @@index([tenantId])
   @@map("platform_invoices")
+}
+
+/// Platform table: AHEAD's credit note against its own invoice (refunds). Never edited.
+model PlatformCreditNote {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  number       String   @unique // CN/26-27/000001
+  fy           String
+  tenantId     String   @map("tenant_id") @db.Uuid
+  invoiceId    String   @unique @map("invoice_id") @db.Uuid // v1: one full credit note per invoice
+  reason       String
+  taxablePaise BigInt   @map("taxable_paise")
+  cgstPaise    BigInt   @map("cgst_paise")
+  sgstPaise    BigInt   @map("sgst_paise")
+  igstPaise    BigInt   @map("igst_paise")
+  totalPaise   BigInt   @map("total_paise")
+  createdBy    String   @map("created_by") @db.Uuid
+  issuedAt     DateTime @default(now()) @map("issued_at") @db.Timestamptz
+
+  @@index([tenantId])
+  @@map("platform_credit_notes")
+}
+
+/// Platform table: every gateway webhook, stored once by its event id (idempotency).
+model WebhookEvent {
+  id          String    @id @default(uuid(7)) @db.Uuid
+  gateway     String
+  eventId     String    @unique @map("event_id")
+  type        String
+  payload     Json
+  receivedAt  DateTime  @default(now()) @map("received_at") @db.Timestamptz
+  processedAt DateTime? @map("processed_at") @db.Timestamptz
+  error       String?
+
+  @@map("webhook_events")
 }
 
 /// Platform table: AHEAD's own document number series per financial year.

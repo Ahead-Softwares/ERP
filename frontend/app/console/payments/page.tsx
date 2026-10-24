@@ -59,7 +59,7 @@ export default function PaymentsPage() {
                         {o.clientName ?? "Client"}
                       </Link>
                       <div className="text-xs text-muted-foreground">
-                        {o.cycle} · by {o.createdByName ?? "—"}
+                        {o.kind === "renewal" ? "renewal · " : ""}{o.cycle} · by {o.createdByName ?? "System"}
                         {o.discountBp > 0 && ` · ${o.discountBp / 100}% off`}
                       </div>
                     </TableCell>

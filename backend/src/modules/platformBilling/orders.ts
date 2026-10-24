@@ -37,6 +37,7 @@ const orderView = (o: Prisma.PlatformOrderGetPayload<object>) => ({
   cancelledReason: o.cancelledReason,
   expiresAt: o.expiresAt,
   paidAt: o.paidAt,
+  paymentLinkUrl: o.paymentLinkUrl,
   createdAt: o.createdAt,
 });
 

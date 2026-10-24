@@ -1,5 +1,6 @@
 import { relayOnce } from './modules/events/outbox';
 import { runTrialExpiry } from './modules/subscription/jobs';
+import { runBillingJobs } from './modules/platformBilling/jobs';
 
 // Background work (LLD §2.1 worker.ts). Runs in-process in development; in production
 // this becomes its own process with BullMQ queues and Redis-backed schedules.
@@ -38,10 +39,14 @@ async function relayLoop() {
 export function startWorker() {
   stopped = false;
   relayTimer = setTimeout(relayLoop, BASE_DELAY_MS);
-  const hourly = () => runTrialExpiry().catch((e) => console.error('[worker] trial expiry:', e instanceof Error ? e.message.split('\n').pop() : e));
+  const short = (e: unknown) => (e instanceof Error ? e.message.split('\n').pop() : e);
+  const hourly = async () => {
+    await runTrialExpiry().catch((e) => console.error('[worker] trial expiry:', short(e)));
+    await runBillingJobs().catch((e) => console.error('[worker] billing jobs:', short(e)));
+  };
   hourlyTimer = setInterval(hourly, 60 * 60 * 1000);
   setTimeout(hourly, 5000);
-  console.log('⚙️  Worker started (outbox relay every 1s, trial expiry hourly)');
+  console.log('⚙️  Worker started (outbox relay every 1s; trial expiry, renewals, dunning and reminders hourly)');
 }
 
 export function stopWorker() {

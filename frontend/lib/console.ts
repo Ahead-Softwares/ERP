@@ -166,6 +166,8 @@ export interface BillTo {
 export interface OrderRow {
   id: string
   tenantId: string
+  kind: "fresh" | "renewal"
+  paymentLinkUrl: string | null
   status: OrderStatus
   cycle: "monthly" | "yearly"
   totalPaise: number
@@ -197,6 +199,14 @@ export interface OrderDetail extends Omit<OrderRow, "clientName" | "invoice"> {
   invoice: PlatformInvoice | null
 }
 
+export interface CreditNote {
+  id: string
+  number: string
+  reason: string
+  totalPaise: number
+  issuedAt: string
+}
+
 export interface PlatformInvoice {
   id: string
   number: string
@@ -212,4 +222,6 @@ export interface PlatformInvoice {
   igstPaise: number
   totalPaise: number
   issuedAt: string
+  /** Present on GET /console/invoices/:id */
+  creditNote?: CreditNote | null
 }

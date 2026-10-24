@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { toast } from "sonner"
 import { Check } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -8,6 +9,8 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Skeleton } from "@/components/ui/skeleton"
 import { PageHeader } from "@/components/app-shell"
 import { useApi } from "@/lib/use-api"
+import { api, errorMessage } from "@/lib/api"
+import { useAuth } from "@/lib/auth"
 import { formatDate, formatNumber, formatPaise } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { ModuleEntitlement, ModuleKey, PlanLimits, TenantStatus } from "@/lib/types"
@@ -37,12 +40,24 @@ const STATUS_LABEL: Record<TenantStatus, string> = {
   purged: "Closed",
 }
 
+interface PendingOrder {
+  kind: "fresh" | "renewal"
+  status: "pending_approval" | "awaiting_payment"
+  totalPaise: number
+  taxPaise: number
+  expiresAt: string
+  paymentLinkUrl: string | null
+}
+
 const limit = (n: number | null) => (n === null ? "Unlimited" : formatNumber(n))
 
 export default function BillingPage() {
   const plans = useApi<Plans>("/billing/plans")
   const sub = useApi<Subscription>("/billing/subscription")
   const [cycle, setCycle] = React.useState<"monthly" | "yearly">("monthly")
+  const { can } = useAuth()
+  const due = useApi<PendingOrder | null>("/billing/pending-order")
+  const [opening, setOpening] = React.useState(false)
 
   if (!plans.data || !sub.data) return <Skeleton className="h-96 rounded-4xl" />
   const s = sub.data
@@ -62,6 +77,8 @@ export default function BillingPage() {
             {s.status === "trialing" && s.trialEndsAt && `All modules unlocked until ${formatDate(s.trialEndsAt)}. After that you move to the Free plan — nothing is deleted.`}
             {s.status === "free" && "Free core modules stay active. Paid-module data is read-only until you upgrade."}
             {s.status === "active" && s.currentPeriodEnd && `Renews on ${formatDate(s.currentPeriodEnd)}.`}
+            {s.status === "incomplete" && "Your workspace is ready. Modules open as soon as the payment below is received."}
+            {s.status === "past_due" && "The last renewal is unpaid. Everything keeps working during the grace period."}
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
@@ -69,6 +86,38 @@ export default function BillingPage() {
           <Usage label="Branches" used={s.usage.branches} max={s.limits.branches} />
         </CardContent>
       </Card>
+
+      {due.data && (
+        <Card className="mb-8 border-primary">
+          <CardHeader>
+            <CardTitle>{due.data.kind === "renewal" ? "Renewal due" : "Payment due"} · {formatPaise(due.data.totalPaise)}</CardTitle>
+            <CardDescription>
+              {due.data.status === "pending_approval"
+                ? "Your AHEAD contact is finalising this order. You'll get a payment link shortly."
+                : `Includes ${formatPaise(due.data.taxPaise)} GST. Pay by ${formatDate(due.data.expiresAt)}${due.data.kind === "renewal" ? " to keep every module running." : " to open your modules."}`}
+            </CardDescription>
+          </CardHeader>
+          {due.data.status === "awaiting_payment" && can("tenant.billing.edit") && (
+            <CardFooter>
+              <Button
+                disabled={opening}
+                onClick={async () => {
+                  setOpening(true)
+                  try {
+                    const url = due.data!.paymentLinkUrl ?? (await api.post<{ url: string }>("/billing/pending-order/link")).url
+                    window.location.href = url
+                  } catch (e) {
+                    toast.error(errorMessage(e))
+                    setOpening(false)
+                  }
+                }}
+              >
+                {opening ? "Opening…" : `Pay ${formatPaise(due.data.totalPaise)}`}
+              </Button>
+            </CardFooter>
+          )}
+        </Card>
+      )}
 
       <div className="mb-4 flex items-center justify-between gap-3">
         <h2 className="text-lg font-semibold">Plans</h2>

@@ -10,6 +10,7 @@ import taskRoutes from '../modules/tasks/routes';
 import bookingRoutes from '../modules/bookings/routes';
 import reportRoutes from '../modules/reports/routes';
 import consoleRoutes from '../modules/console/routes';
+import { publicPayments, tenantPayments } from '../modules/platformBilling/routes';
 
 const router = Router();
 
@@ -28,6 +29,8 @@ router.use('/auth', identityRoutes);
 router.use('/me', meHandler);
 router.use('/console', consoleRoutes); // AHEAD team workspace; before the tenant routers
 router.use('/', publicBilling); // public share links, before any authenticated router
+router.use('/', publicPayments); // gateway webhooks (+ dev test gateway), signed, no login
+router.use('/', tenantPayments); // what the client owes AHEAD
 router.use('/', tenancyRoutes);
 router.use('/', catalogRoutes);
 router.use('/', crmRoutes);

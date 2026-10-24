@@ -181,10 +181,15 @@ Design: `Platform design - Multi level flow, super admin, verder, partner.docx` 
 - [x] Tests (6 new, suite green): allocation, seller state required, approval rules, full-amount rule, intra/inter-state GST, invoice numbering, entitlements after payment
 - To do before go-live: set AHEAD's real billing details in Console → Settings; CA to confirm SAC and rate
 
-### Step 4b — Online payments and renewals
-- [ ] Razorpay payment link + signed, idempotent webhook (`webhook_events`), using `capturePayment()`; dev "test payment" until keys are added
-- [ ] Renewal orders + dunning job, trial reminder job (notification_log de-dup), lapse job for unpaid orders (→ `unpaid_cancelled`)
-- [ ] Credit notes for refunds
+### Step 4b — Online payments and renewals — done 2026-10-24
+- [x] Gateway adapter: Razorpay payment links (`RAZORPAY_KEY_ID/SECRET/WEBHOOK_SECRET`); without keys, development uses a built-in test gateway (`/pay/test/<link>` page with a Pay button)
+- [x] `POST /api/v1/webhooks/razorpay`: HMAC-SHA256 signature on the raw body, stored once by event id (`webhook_events`), paid link → `capturePayment()`; wrong amount / unknown link kept as "needs attention" (200, no retry loop)
+- [x] Console: send / resend payment link (owner gets email + SMS, link copied); client Plan & billing page shows what is due with a Pay button
+- [x] Hourly jobs (worker): unpaid orders lapse (never-paid client → `closed`), renewal order 7 days before the period ends at current prices with a link and reminders at 7/3/1 days, dunning (period over → `past_due` + grace, grace over → Free), trial reminders at 7/3/1 days — every message de-duplicated in `notification_log`
+- [x] A renewal paid on time extends from the old period end (`renewal_succeeded`)
+- [x] Credit notes `CN/26-27/000001`: full refund of an AHEAD invoice, optional "end the paid plan now" (→ Free); shown on the invoice
+- [x] Tests (9 new; suite 61/61 green): signatures, Razorpay parsing, webhook once-only and forged/wrong-amount cases, lapse, renewal + reminders + period extension, dunning, trial reminders, credit notes
+- To do before go-live: add Razorpay keys, register the webhook (event `payment_link.paid`), and set AHEAD billing details; auto-debit (UPI AutoPay / e-mandate) is not built yet — renewals are paid by link
 
 ### Step 5 — Support and reports
 - [ ] Support access with tenant consent (time-limited "Login as", banner, audit)

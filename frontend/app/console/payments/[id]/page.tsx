@@ -3,7 +3,7 @@
 import * as React from "react"
 import Link from "next/link"
 import { toast } from "sonner"
-import { ArrowLeft, Check, FileText, IndianRupee, X } from "lucide-react"
+import { ArrowLeft, Check, FileText, IndianRupee, Link2, X } from "lucide-react"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -134,6 +134,7 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
   const [payOpen, setPayOpen] = React.useState(false)
   const [cancelOpen, setCancelOpen] = React.useState(false)
   const [approving, setApproving] = React.useState(false)
+  const [sendingLink, setSendingLink] = React.useState(false)
 
   if (error) return <p className="text-sm text-destructive">{error.message}</p>
   if (!o) return <Skeleton className="h-96 rounded-4xl" />
@@ -147,7 +148,7 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
       </Link>
       <PageHeader
         title={o.client?.name ?? "Order"}
-        description={`Created ${formatDateTime(o.createdAt)} by ${o.createdByName ?? "—"} · ${o.cycle}`}
+        description={`${o.kind === "renewal" ? "Renewal · " : ""}Created ${formatDateTime(o.createdAt)} by ${o.createdByName ?? "System"} · ${o.cycle}`}
         actions={
           <>
             {canApprove && (
@@ -167,6 +168,27 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
                 }}
               >
                 <Check /> Approve discount
+              </Button>
+            )}
+            {o.status === "awaiting_payment" && (
+              <Button
+                variant={o.paymentLinkUrl ? "outline" : "default"}
+                disabled={sendingLink}
+                onClick={async () => {
+                  setSendingLink(true)
+                  try {
+                    const r = await api.post<{ url: string; sent: boolean }>(`/console/orders/${o.id}/payment-link`, { resend: !!o.paymentLinkUrl })
+                    await navigator.clipboard?.writeText(r.url).catch(() => undefined)
+                    toast.success(o.paymentLinkUrl ? "Link sent again (and copied)" : "Payment link sent to the owner (and copied)")
+                    await reload()
+                  } catch (e) {
+                    toast.error(errorMessage(e))
+                  } finally {
+                    setSendingLink(false)
+                  }
+                }}
+              >
+                <Link2 /> {o.paymentLinkUrl ? "Resend link" : "Send payment link"}
               </Button>
             )}
             {o.status === "awaiting_payment" && canConsole("platform.payment.create") && (
@@ -242,6 +264,9 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
                 <div className="flex justify-between"><span className="text-muted-foreground">CGST + SGST</span><span className="tabular-nums">{formatPaise(o.cgstPaise + o.sgstPaise)}</span></div>
               )}
               <div className="mt-1 flex justify-between border-t pt-2 font-semibold"><span>Total</span><span className="tabular-nums">{formatPaise(o.totalPaise)}</span></div>
+              {o.paymentLinkUrl && o.status === "awaiting_payment" && (
+                <a href={o.paymentLinkUrl} target="_blank" rel="noreferrer" className="mt-2 truncate text-xs underline underline-offset-4">{o.paymentLinkUrl}</a>
+              )}
             </CardContent>
           </Card>
           <Card>
