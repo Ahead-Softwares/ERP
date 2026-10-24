@@ -32,7 +32,7 @@ export function Field({
   required?: boolean
   /** Character counter for long text: [current, max] */
   count?: [number, number]
-  children: React.ReactElement<{ id?: string; "aria-invalid"?: boolean; "aria-describedby"?: string; "aria-required"?: boolean }>
+  children: React.ReactElement<{ id?: string; "aria-invalid"?: boolean; "aria-describedby"?: string; "aria-required"?: boolean; "data-valid"?: string }>
   className?: string
 }) {
   const id = React.useId()
@@ -53,6 +53,8 @@ export function Field({
         "aria-invalid": !!error || undefined,
         "aria-describedby": describedBy,
         "aria-required": required || undefined,
+        // Green border once a value passed its checks (wireframe 0.3)
+        ...(line === "success" ? { "data-valid": "true" } : {}),
       })}
       {(line || count) && (
       <div className="flex items-start justify-between gap-2">
@@ -92,7 +94,7 @@ export function NativeSelect({ className, ...props }: React.ComponentProps<"sele
   return (
     <select
       className={cn(
-        "h-9 w-full rounded-3xl border border-transparent bg-input/50 px-3 text-sm outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 disabled:opacity-50",
+        "h-10 w-full rounded-lg border border-input bg-card px-3 text-sm text-foreground outline-none transition-[color,box-shadow,border-color] focus-visible:border-primary focus-visible:ring-3 focus-visible:ring-primary/20 aria-invalid:border-destructive disabled:bg-muted disabled:text-muted-foreground",
         className
       )}
       {...props}

@@ -131,6 +131,16 @@ router.patch('/tenant/setup', requirePermission('tenant.settings.edit'), validat
   res.json(await workspace.updateSetup(req.ctx!.tenantId, req.body));
 }));
 
+router.get('/tenant/sample-data', requirePermission('tenant.settings.view'), tx(async (_req, res) => {
+  res.json(await workspace.sampleDataStatus());
+}));
+router.post('/tenant/sample-data', requirePermission('tenant.settings.edit'), tx(async (req, res) => {
+  res.json(await workspace.addSampleData(req.ctx!.tenantId, req.ctx!.userId));
+}));
+router.delete('/tenant/sample-data', requirePermission('tenant.settings.edit'), tx(async (req, res) => {
+  res.json(await workspace.removeSampleData(req.ctx!.tenantId));
+}));
+
 // Loading screen right after signup: real progress of the tenant.created consumers
 router.get('/tenant/provisioning', tx(async (req, res) => {
   const t = await tenancy.getTenant(req.ctx!.tenantId);

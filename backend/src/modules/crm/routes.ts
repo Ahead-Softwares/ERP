@@ -271,15 +271,25 @@ const ImportRow = z.object({
 router.post(
   '/contacts/import',
   requirePermission('crm.contact.create'),
-  validate(z.object({ type: z.enum(['customer', 'lead']).default('customer'), rows: z.array(z.record(z.unknown())).min(1).max(1000) })),
+  validate(
+    z.object({
+      type: z.enum(['customer', 'lead']).default('customer'),
+      rows: z.array(z.record(z.unknown())).min(1).max(1000),
+      /** skip = keep the existing record; update = fill it with the file's values */
+      onDuplicate: z.enum(['skip', 'update']).default('skip'),
+    }),
+  ),
   tx(async (req, res) => {
     const ctx = req.ctx!;
-    const { type, rows } = req.body as { type: Kind; rows: Record<string, unknown>[] };
-    const existing = await db().contact.findMany({ select: { phone: true, email: true } });
-    const phones = new Set(existing.map((e) => e.phone).filter(Boolean));
-    const emails = new Set(existing.map((e) => e.email).filter(Boolean));
-    const result = { created: 0, duplicates: [] as { row: number; name: string; reason: string }[], errors: [] as { row: number; message: string }[] };
+    const { type, rows, onDuplicate } = req.body as { type: Kind; rows: Record<string, unknown>[]; onDuplicate: 'skip' | 'update' };
+    const existing = await db().contact.findMany({ select: { id: true, phone: true, email: true } });
+    const byPhone = new Map(existing.filter((e) => e.phone).map((e) => [e.phone!, e.id]));
+    const byEmail = new Map(existing.filter((e) => e.email).map((e) => [e.email!, e.id]));
+    const phones = new Set(byPhone.keys());
+    const emails = new Set(byEmail.keys());
+    const result = { created: 0, updated: 0, duplicates: [] as { row: number; name: string; reason: string }[], errors: [] as { row: number; message: string }[] };
     const toCreate: Prisma.ContactCreateManyInput[] = [];
+    const toUpdate: { id: string; data: Prisma.ContactUpdateInput }[] = [];
 
     rows.forEach((raw, i) => {
       const parsed = ImportRow.safeParse(Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, v == null ? undefined : String(v)])));
@@ -290,6 +300,18 @@ router.post(
       const phone = r.phone ? rules.storedPhone(r.phone) : null;
       const email = r.email ? normaliseEmail(r.email) : null;
       const gstin = r.gstin ? rules.upperNoSpaces(r.gstin) : null;
+      const existingId = (phone && byPhone.get(phone)) || (email && byEmail.get(email)) || null;
+      if (existingId && onDuplicate === 'update' && !toUpdate.some((u) => u.id === existingId)) {
+        toUpdate.push({
+          id: existingId,
+          data: {
+            name: r.name, ...(phone ? { phone } : {}), ...(email ? { email } : {}), ...(r.companyName ? { companyName: r.companyName } : {}),
+            ...(gstin ? { gstin, stateCode: gstin.slice(0, 2) } : {}), ...(r.city ? { address: { city: r.city } } : {}), ...(r.notes ? { notes: r.notes } : {}),
+            version: { increment: 1 },
+          },
+        });
+        return;
+      }
       if ((phone && phones.has(phone)) || (email && emails.has(email))) return result.duplicates.push({ row: i + 1, name: r.name, reason: phone && phones.has(phone) ? 'Phone already exists' : 'Email already exists' });
       if (phone) phones.add(phone);
       if (email) emails.add(email);
@@ -308,7 +330,9 @@ router.post(
       result.created = r.count;
       if (type === 'customer') await markOnboarding(ctx, 'firstCustomer');
     }
-    await audit({ action: 'crm.contact.import', entity: 'contact', after: { type, created: result.created, duplicates: result.duplicates.length, errors: result.errors.length } });
+    for (const u of toUpdate) await db().contact.update({ where: { id: u.id }, data: u.data });
+    result.updated = toUpdate.length;
+    await audit({ action: 'crm.contact.import', entity: 'contact', after: { type, onDuplicate, created: result.created, updated: result.updated, duplicates: result.duplicates.length, errors: result.errors.length } });
     res.json(result);
   }),
 );

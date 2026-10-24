@@ -4,14 +4,14 @@ import * as React from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { toast } from "sonner"
-import { ArrowLeft, Ban, Copy, FilePlus2, FileText, IndianRupee, Pencil, Printer, Send, Trash2 } from "lucide-react"
+import { ArrowLeft, Ban, Copy, FileText, IndianRupee, Pencil, Plus, Printer, Send, Trash2 } from "lucide-react"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { PageHeader } from "@/components/app-shell"
 import { ConfirmDialog, EmptyState, MoneyInput, Spinner, StatusBadge } from "@/components/common"
-import { DataList, periodFilter, type Column } from "@/components/data-list"
+import { DataList, HeaderLink, periodFilter, type Column, type ViewPreset } from "@/components/data-list"
 import { todayInIndia } from "@contracts/validation"
 import { Field, FormError, NativeSelect } from "@/components/form"
 import { SalesDocEditor } from "@/components/sales-doc-editor"
@@ -22,6 +22,7 @@ import { useAuth } from "@/lib/auth"
 import { useApi } from "@/lib/use-api"
 import { formatDate, formatPaise } from "@/lib/format"
 import { PAYMENT_METHODS } from "@/lib/money"
+import { cn } from "@/lib/utils"
 import { docApi, docLabel, docPath, type SalesDoc } from "@/lib/sales"
 
 type Kind = "invoice" | "quotation"
@@ -36,6 +37,7 @@ interface Row {
   dueDate: string | null
   totalPaise: number
   paidPaise: number
+  branchId: string | null
 }
 
 const STATUS_FILTERS: Record<Kind, { value: string; label: string }[]> = {
@@ -56,71 +58,104 @@ const STATUS_FILTERS: Record<Kind, { value: string; label: string }[]> = {
   ],
 }
 
+const PILL: Record<string, string> = {
+  red: "bg-[#FDECEA] text-[#B42318] dark:bg-red-950 dark:text-red-200",
+  amber: "bg-[#FFF3D6] text-[#8A5A00] dark:bg-amber-950 dark:text-amber-200",
+  gray: "bg-muted text-foreground/80",
+  green: "bg-[#E6F4EC] text-[#1F7A4D] dark:bg-emerald-950 dark:text-emerald-200",
+  blue: "bg-accent text-accent-foreground",
+}
+
+/** List status as drawn in the wireframe: Overdue 6d (red), Partial (amber), Unpaid (grey) … */
+function listStatus(kind: Kind, r: Row, today: string): { label: string; tone: keyof typeof PILL } {
+  if (kind === "invoice") {
+    const open = r.status === "issued" || r.status === "partially_paid"
+    if (open && r.dueDate && r.dueDate.slice(0, 10) < today) {
+      const days = Math.round((Date.parse(today) - Date.parse(r.dueDate.slice(0, 10))) / 86_400_000)
+      return { label: `Overdue ${days}d`, tone: "red" }
+    }
+    if (r.status === "partially_paid") return { label: "Partial", tone: "amber" }
+    if (r.status === "issued") return { label: "Unpaid", tone: "gray" }
+    if (r.status === "paid") return { label: "Paid", tone: "green" }
+    if (r.status === "cancelled") return { label: "Cancelled", tone: "gray" }
+    return { label: "Draft", tone: "gray" }
+  }
+  const tone: Record<string, keyof typeof PILL> = { draft: "gray", sent: "blue", accepted: "green", converted: "green", declined: "red" }
+  return { label: r.status.charAt(0).toUpperCase() + r.status.slice(1), tone: tone[r.status] ?? "gray" }
+}
+
 export function SalesDocList({ kind }: { kind: Kind }) {
   const { can, me } = useAuth()
   const today = todayInIndia()
   const label = docLabel(kind)
   const canCreate = can(`${perm(kind)}.create`)
+  const branches = useApi<{ data: { id: string; name: string }[] }>(can("tenant.branch.view") ? "/branches" : null)
+  const branchName = (id: string | null | undefined) => branches.data?.data.find((b) => b.id === id)?.name ?? "—"
   const newButton = canCreate && (
-    <Link href={`/app/m/${docPath(kind)}/new`} className={buttonVariants()}>
-      <FilePlus2 /> New {label.toLowerCase()}
-    </Link>
+    <HeaderLink href={`/app/m/${docPath(kind)}/new`} primary>
+      <Plus /> New {label.toLowerCase()}
+    </HeaderLink>
   )
-  const isOverdue = (r: Row) => kind === "invoice" && ["issued", "partially_paid"].includes(r.status) && !!r.dueDate && r.dueDate.slice(0, 10) < today
-  const statusLabel = (r: Row) => (isOverdue(r) ? "overdue" : r.status)
+  const status = (r: Row) => listStatus(kind, r, today)
+  const due = (r: Row) => Math.max(0, r.totalPaise - r.paidPaise)
 
   const columns: Column<Row>[] = [
-    { key: "number", header: "Number", hideable: false, cell: (r) => <span className="font-mono text-xs">{r.number ?? "Draft"}</span>, csv: (r) => r.number ?? "Draft", sort: (r) => r.number ?? "" },
-    { key: "customer", header: "Customer", cell: (r) => <span className="font-medium">{r.buyer?.name ?? "—"}</span>, csv: (r) => r.buyer?.name, sort: (r) => r.buyer?.name?.toLowerCase() ?? "" },
-    { key: "date", header: "Date", cell: (r) => <span className="text-muted-foreground">{formatDate(r.issueDate)}</span>, csv: (r) => r.issueDate.slice(0, 10), sort: (r) => r.issueDate },
+    { key: "number", header: "Number", hideable: false, cell: (r) => <span className="font-semibold">{r.number ?? "Draft"}</span>, csv: (r) => r.number ?? "Draft", sort: (r) => r.number ?? "" },
+    { key: "date", header: "Date", cell: (r) => formatDate(r.issueDate), csv: (r) => r.issueDate.slice(0, 10), sort: (r) => r.issueDate },
+    { key: "customer", header: "Customer", cell: (r) => r.buyer?.name ?? "—", csv: (r) => r.buyer?.name, sort: (r) => r.buyer?.name?.toLowerCase() ?? "" },
+    { key: "branch", header: "Branch", defaultHidden: (branches.data?.data.length ?? 0) < 2, cell: (r) => branchName(r.branchId), csv: (r) => branchName(r.branchId) },
+    { key: "amount", header: "Amount", align: "right", cell: (r) => formatPaise(r.totalPaise), csv: (r) => (r.totalPaise / 100).toFixed(2), sort: (r) => r.totalPaise },
     ...(kind === "invoice"
-      ? [{ key: "due", header: "Due date", defaultHidden: true, cell: (r: Row) => (r.dueDate ? formatDate(r.dueDate) : "—"), csv: (r: Row) => r.dueDate?.slice(0, 10), sort: (r: Row) => r.dueDate ?? "" }]
+      ? [{ key: "due", header: "Due", align: "right" as const, cell: (r: Row) => formatPaise(due(r)), csv: (r: Row) => (due(r) / 100).toFixed(2), sort: (r: Row) => due(r) }]
       : []),
-    { key: "status", header: "Status", cell: (r) => <StatusBadge status={statusLabel(r)} />, csv: statusLabel },
     {
-      key: "amount",
-      header: "Amount",
-      align: "right",
-      cell: (r) => (
-        <>
-          <div className="font-medium">{formatPaise(r.totalPaise)}</div>
-          {kind === "invoice" && r.paidPaise > 0 && r.paidPaise < r.totalPaise && <div className="text-xs text-muted-foreground">{formatPaise(r.totalPaise - r.paidPaise)} due</div>}
-        </>
-      ),
-      csv: (r) => (r.totalPaise / 100).toFixed(2),
-      sort: (r) => r.totalPaise,
+      key: "status",
+      header: "Status",
+      cell: (r) => {
+        const s = status(r)
+        return <span className={cn("inline-flex h-[22px] items-center rounded-full px-2 text-xs font-semibold", PILL[s.tone], r.status === "cancelled" && "line-through")}>{s.label}</span>
+      },
+      csv: (r) => status(r).label,
     },
-    ...(kind === "invoice"
-      ? [{ key: "balance", header: "Balance due", align: "right" as const, defaultHidden: true, cell: (r: Row) => formatPaise(Math.max(0, r.totalPaise - r.paidPaise)), csv: (r: Row) => (Math.max(0, r.totalPaise - r.paidPaise) / 100).toFixed(2), sort: (r: Row) => r.totalPaise - r.paidPaise }]
-      : []),
   ]
 
+  const presets: ViewPreset[] =
+    kind === "invoice"
+      ? [
+          { key: "all", label: "All", params: {}, countKey: "all" },
+          { key: "overdue", label: "Overdue", params: { overdue: "true" }, countKey: "overdue" },
+          { key: "unpaid", label: "Unpaid", params: { unpaid: "true" }, countKey: "unpaid" },
+          { key: "draft", label: "Draft", params: { status: "draft" }, countKey: "draft" },
+          { key: "paid", label: "Paid", params: { status: "paid" }, countKey: "paid" },
+          { key: "cancelled", label: "Cancelled", params: { status: "cancelled" }, countKey: "cancelled" },
+        ]
+      : STATUS_FILTERS.quotation.map((f) => ({ key: f.value || "all", label: f.label, params: (f.value ? { status: f.value } : {}) as Record<string, string>, countKey: f.value || "all" }))
+
   return (
-    <>
-      <PageHeader
-        title={kind === "invoice" ? "Invoices" : "Quotations"}
-        description={kind === "invoice" ? "GST tax invoices, receipts and dues. Issued invoices can't be edited." : "Estimates you can send and convert into invoices."}
-        actions={newButton}
-      />
-      <DataList<Row>
-        id={kind === "invoice" ? "invoices" : "quotations"}
-        path={docApi(kind)}
-        columns={columns}
-        searchPlaceholder="Search number or customer"
-        presets={STATUS_FILTERS[kind].map((f) => ({ key: f.value || "all", label: f.label, params: (f.value === "unpaid" ? { unpaid: "true" } : f.value ? { status: f.value } : {}) as Record<string, string> }))}
-        filters={[periodFilter(me?.tenant?.fyStartMonth ?? 4)]}
-        rowHref={(r) => `/app/m/${docPath(kind)}/${r.id}`}
-        exportName={kind === "invoice" ? "invoices" : "quotations"}
-        emptyState={
-          <EmptyState
-            icon={FileText}
-            title={`No ${label.toLowerCase()}s yet`}
-            description={kind === "invoice" ? "Create your first GST invoice in under a minute." : "Send a quotation and convert it to an invoice when accepted."}
-            action={newButton}
-          />
-        }
-      />
-    </>
+    <DataList<Row>
+      id={kind === "invoice" ? "invoices" : "quotations"}
+      path={docApi(kind)}
+      countsPath={`${docApi(kind)}/counts`}
+      header={{
+        breadcrumb: kind === "invoice" ? "Billing › Invoices" : "Sales › Quotations",
+        title: kind === "invoice" ? "Invoices" : "Quotations",
+        primary: newButton,
+      }}
+      columns={columns}
+      searchPlaceholder="Search number, customer, mobile, GSTIN"
+      presets={presets}
+      filters={[periodFilter(me?.tenant?.fyStartMonth ?? 4)]}
+      rowHref={(r) => `/app/m/${docPath(kind)}/${r.id}`}
+      exportName={kind === "invoice" ? "invoices" : "quotations"}
+      emptyState={
+        <EmptyState
+          icon={FileText}
+          title={`No ${label.toLowerCase()}s yet`}
+          description={kind === "invoice" ? "Create a GST invoice in under a minute, or bring your old invoices in." : "Send a quotation and convert it to an invoice when accepted."}
+          action={newButton}
+        />
+      }
+    />
   )
 }
 

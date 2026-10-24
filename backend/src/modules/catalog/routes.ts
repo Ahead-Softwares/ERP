@@ -152,4 +152,67 @@ consumer('catalog.seed-template', 'tenant.created', async (evt) => {
   });
 });
 
+// ── CSV import (setup wizard / Settings › Data): the browser parses and maps the file ──
+const ItemImportRow = z.object({
+  name: z.string().trim().min(1, 'Name is missing').max(160),
+  type: z.string().trim().toLowerCase().optional(),
+  sku: z.string().trim().max(40).optional(),
+  unit: z.string().trim().max(20).optional(),
+  price: z.string().trim().optional(),
+  gstRate: z.string().trim().optional(),
+  hsnSac: z.string().trim().optional(),
+  description: z.string().trim().max(2000).optional(),
+});
+
+router.post(
+  '/items/import',
+  requirePermission('catalog.item.create'),
+  validate(z.object({ rows: z.array(z.record(z.unknown())).min(1).max(1000), onDuplicate: z.enum(['skip', 'update']).default('skip') })),
+  tx(async (req, res) => {
+    const ctx = req.ctx!;
+    const { rows, onDuplicate } = req.body as { rows: Record<string, unknown>[]; onDuplicate: 'skip' | 'update' };
+    const existing = await db().item.findMany({ select: { id: true, name: true, sku: true } });
+    const byName = new Map(existing.map((e) => [e.name.trim().toLowerCase(), e.id]));
+    const bySku = new Map(existing.filter((e) => e.sku).map((e) => [e.sku!.toLowerCase(), e.id]));
+    const result = { created: 0, updated: 0, duplicates: [] as { row: number; name: string; reason: string }[], errors: [] as { row: number; message: string }[] };
+    const toCreate: Prisma.ItemCreateManyInput[] = [];
+    const toUpdate: { id: string; data: Prisma.ItemUpdateInput }[] = [];
+    const seen = new Set<string>();
+
+    rows.forEach((raw, i) => {
+      const parsed = ItemImportRow.safeParse(Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, v == null || v === '' ? undefined : String(v)])));
+      if (!parsed.success) return result.errors.push({ row: i + 1, message: parsed.error.issues[0].message });
+      const r = parsed.data;
+      const price = r.price === undefined ? 0 : Number(r.price.replace(/[₹,s]/g, ''));
+      if (!Number.isFinite(price) || price < 0) return result.errors.push({ row: i + 1, message: 'Price must be a number' });
+      const rate = r.gstRate === undefined ? 18 : Number(r.gstRate.replace('%', ''));
+      const rateBp = Math.round(rate * 100);
+      if (!(GST_RATES_BP as readonly number[]).includes(rateBp)) return result.errors.push({ row: i + 1, message: 'GST rate must be 0, 0.25, 3, 5, 12, 18 or 28' });
+      const hsnProblem = r.hsnSac ? zHsnOrSac.safeParse(r.hsnSac).error?.issues[0]?.message : undefined;
+      if (hsnProblem) return result.errors.push({ row: i + 1, message: hsnProblem });
+      const type = r.type?.startsWith('serv') ? ('service' as const) : ('product' as const);
+      const key = r.sku ? `sku:${r.sku.toLowerCase()}` : `name:${r.name.toLowerCase()}`;
+      if (seen.has(key)) return result.duplicates.push({ row: i + 1, name: r.name, reason: 'Repeated in the file' });
+      seen.add(key);
+      const data = { name: r.name, type, sku: r.sku ?? null, unit: r.unit ?? (type === 'service' ? 'service' : 'pcs'), pricePaise: BigInt(Math.round(price * 100)), gstRateBp: rateBp, hsnSac: r.hsnSac ?? null, description: r.description ?? null };
+      const existingId = (r.sku && bySku.get(r.sku.toLowerCase())) || byName.get(r.name.toLowerCase()) || null;
+      if (existingId) {
+        if (onDuplicate === 'update') return toUpdate.push({ id: existingId, data: { ...data, version: { increment: 1 } } });
+        return result.duplicates.push({ row: i + 1, name: r.name, reason: 'Already in your catalogue' });
+      }
+      toCreate.push({ ...data, tenantId: ctx.tenantId, createdBy: ctx.userId });
+    });
+
+    await assertRecordLimit(ctx, 'items', async () => (await db().item.count()) + toCreate.length - 1, 'products and services');
+    if (toCreate.length) {
+      result.created = (await db().item.createMany({ data: toCreate })).count;
+      await markOnboarding(ctx, 'firstItem');
+    }
+    for (const u of toUpdate) await db().item.update({ where: { id: u.id }, data: u.data });
+    result.updated = toUpdate.length;
+    await audit({ action: 'catalog.item.import', entity: 'item', after: { onDuplicate, created: result.created, updated: result.updated, duplicates: result.duplicates.length, errors: result.errors.length } });
+    res.json(result);
+  }),
+);
+
 export default router;

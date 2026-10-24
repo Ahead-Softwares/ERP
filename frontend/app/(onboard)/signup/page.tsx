@@ -3,7 +3,7 @@
 import * as React from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
-import { ArrowLeft, Eye, EyeOff, Loader2, Search, Sparkles } from "lucide-react"
+import { ArrowLeft, Check, Loader2, Search, Sparkles } from "lucide-react"
 import {
   BUSINESS_TYPES,
   cleanMobile,
@@ -81,6 +81,7 @@ const EMPTY = {
   modules: [] as string[],
   heardFrom: "",
   couponCode: "",
+  marketingOptIn: true,
   otp: "",
 }
 type Values = typeof EMPTY
@@ -247,6 +248,7 @@ function SignupFlow() {
     modules: v.modules.length ? v.modules : recommendModules(v.goals, template),
     heardFrom: v.heardFrom,
     couponCode: v.couponCode,
+    marketingOptIn: v.marketingOptIn,
     termsAccepted: addBusiness ? true : v.terms,
   })
 
@@ -375,15 +377,16 @@ function SignupFlow() {
   }))
 
   return (
-    <div className="flex min-h-svh bg-background">
+    <div className="flex min-h-svh bg-card">
       <SignupRail
         steps={rail}
+        narrow={step === "industry" || step === "goals" || step === "verify"}
         footer={addBusiness ? "Adds a new business to your login. Switch between businesses from the top bar." : "15-day free trial · every module unlocked · no card needed. Your data stays if you don't upgrade."}
       />
-      <main className="flex flex-1 justify-center px-4 py-8 sm:px-8 lg:py-12">
+      <main className="flex flex-1 justify-center px-4 py-8 sm:px-10">
         <form
           {...form.formProps}
-          className="grid w-full max-w-2xl content-start gap-6"
+          className={cn("grid w-full content-start gap-3.5", step === "account" ? "max-w-[480px]" : step === "business" ? "max-w-[560px]" : "max-w-5xl")}
           onSubmit={(e) => {
             e.preventDefault()
             if (step === "verify") void create()
@@ -420,7 +423,13 @@ function SignupFlow() {
           )}
 
           <FormError message={form.formError} />
-          <div className="flex items-center justify-between gap-3 border-t pt-5">
+          {step === "account" && (
+            <Button type="submit" size="lg" className="w-full" disabled={submitting}>
+              {returnToReview ? "Save & back to review" : "Continue"}
+            </Button>
+          )}
+          {step !== "account" && step !== "verify" && (
+          <div className="mt-1.5 flex items-center justify-between gap-3">
             {stepIndex > 0 ? (
               <Button type="button" variant="outline" onClick={back} disabled={submitting}>
                 <ArrowLeft /> Back
@@ -429,19 +438,10 @@ function SignupFlow() {
               <span />
             )}
             <Button type="submit" size="lg" disabled={submitting}>
-              {submitting ? (
-                <>
-                  <Loader2 className="animate-spin" /> Creating your workspace…
-                </>
-              ) : step === "verify" ? (
-                addBusiness ? "Create business" : "Verify & create workspace"
-              ) : returnToReview ? (
-                "Save & back to review"
-              ) : (
-                "Continue"
-              )}
+              {returnToReview ? "Save & back to review" : "Continue"}
             </Button>
           </div>
+          )}
         </form>
       </main>
     </div>
@@ -505,9 +505,25 @@ function AccountStep({ form }: { form: SignupForm }) {
 
   return (
     <>
-      <StepTitle title="Create your account" description="You'll be the owner of the workspace. You can invite your team later." />
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Full name" required error={form.errors.name} className="sm:col-span-2">
+      <StepTitle title="Create your account" />
+      {/* Google sign-up needs an OAuth client (TASKS: Phase 1 "Not built yet"); shown as drawn, not active */}
+      <Button type="button" variant="outline" size="lg" className="w-full" disabled title="Google sign-up is coming soon">
+        <svg viewBox="0 0 24 24" className="size-[18px]" aria-hidden>
+          <path fill="#4285F4" d="M22.6 12.2c0-.8-.1-1.5-.2-2.2H12v4.2h5.9a5 5 0 0 1-2.2 3.3v2.7h3.6c2.1-1.9 3.3-4.8 3.3-8z" />
+          <path fill="#34A853" d="M12 23c3 0 5.5-1 7.3-2.7l-3.6-2.7c-1 .7-2.2 1.1-3.7 1.1-2.9 0-5.3-1.9-6.2-4.5H2.1v2.8A11 11 0 0 0 12 23z" />
+          <path fill="#FBBC05" d="M5.8 14.2a6.6 6.6 0 0 1 0-4.3V7.1H2.1a11 11 0 0 0 0 9.9z" />
+          <path fill="#EA4335" d="M12 5.4c1.6 0 3.1.6 4.2 1.7l3.2-3.2A11 11 0 0 0 2.1 7.1l3.7 2.8C6.7 7.3 9.1 5.4 12 5.4z" />
+        </svg>
+        Continue with Google
+        <span className="ml-1 rounded-full bg-muted px-1.5 text-[10px] font-semibold text-muted-foreground">Soon</span>
+      </Button>
+      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+        <span className="h-px flex-1 bg-border" />
+        or with email
+        <span className="h-px flex-1 bg-border" />
+      </div>
+      <div className="grid gap-3.5">
+        <Field label="Full name" required error={form.errors.name}>
           <Input {...form.field("name")} autoComplete="name" autoFocus />
         </Field>
         <Field
@@ -541,12 +557,17 @@ function AccountStep({ form }: { form: SignupForm }) {
             <Input {...form.field("mobile")} inputMode="tel" autoComplete="tel-national" placeholder="98765 43210" />
           </div>
         </Field>
-        <Field label="Password" required error={form.errors.password} className="sm:col-span-2" hint="8+ characters with a letter and a number">
+        <Field
+          label="Password"
+          required
+          error={form.errors.password}
+          hint={[v.password ? STRENGTH[strength].label : "", v.password && strength < 4 ? (strength < 3 ? "add a symbol or make it longer" : "add a symbol") : "", "8+ characters with a letter and a number"].filter(Boolean).join(" · ")}
+        >
           <div className="grid gap-2">
             <div className="relative">
-              <Input {...form.field("password")} type={show ? "text" : "password"} autoComplete="new-password" className="pr-10" />
-              <button type="button" className="absolute top-1/2 right-2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground" onClick={() => setShow((s) => !s)} aria-label={show ? "Hide password" : "Show password"}>
-                {show ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+              <Input {...form.field("password")} type={show ? "text" : "password"} autoComplete="new-password" className="pr-14" />
+              <button type="button" className="absolute top-1/2 right-3 -translate-y-1/2 text-xs font-semibold text-primary hover:underline" onClick={() => setShow((s) => !s)} aria-label={show ? "Hide password" : "Show password"}>
+                {show ? "Hide" : "Show"}
               </button>
             </div>
             {v.password && (
@@ -556,7 +577,6 @@ function AccountStep({ form }: { form: SignupForm }) {
                     <span key={i} className={cn("h-1 flex-1 rounded-full", i <= strength ? STRENGTH[strength].tone : "bg-muted")} />
                   ))}
                 </div>
-                <span className="w-12 text-right text-xs text-muted-foreground">{STRENGTH[strength].label}</span>
               </div>
             )}
           </div>
@@ -579,6 +599,9 @@ function AccountStep({ form }: { form: SignupForm }) {
     </>
   )
 }
+
+/** 4th PAN letter → holder type */
+const PAN_HOLDER_LABEL: Record<string, string> = { P: "Individual / proprietor", F: "Firm / LLP", C: "Company", H: "HUF", T: "Trust", A: "Association of persons", B: "Body of individuals", G: "Government", L: "Local authority", J: "Artificial juridical person" }
 
 function BusinessStep({ form }: { form: SignupForm }) {
   const v = form.values
@@ -622,15 +645,29 @@ function BusinessStep({ form }: { form: SignupForm }) {
         {form.errors.gstRegistered && <p className="text-xs text-destructive">{form.errors.gstRegistered}</p>}
       </fieldset>
       {v.gstRegistered === "yes" && (
-        <div className="grid gap-3 rounded-3xl border bg-muted/30 p-4">
-          <Field label="GSTIN" required error={form.errors.gstin} success={gstOk && !gstinStateMismatch(v.gstin, v.stateCode) ? `Valid · ${stateName(v.gstin.slice(0, 2))}` : null} hint="15 characters, e.g. 27ABCDE1234F1Z5">
-            <Input {...form.field("gstin")} maxLength={15} className="font-mono uppercase" spellCheck={false} autoCapitalize="characters" />
+        <>
+          <Field label="GSTIN" required error={form.errors.gstin} hint={gstOk ? undefined : "15 characters, e.g. 27ABCDE1234F1Z5"}>
+            <div className="flex gap-2">
+              <Input {...form.field("gstin")} maxLength={15} className="font-mono uppercase" spellCheck={false} autoCapitalize="characters" data-valid={gstOk && !form.errors.gstin ? "true" : undefined} />
+              {/* Needs a GST Suvidha Provider API to look up the legal name and address */}
+              <Button type="button" variant="outline" className="shrink-0" disabled title="Fetching details from the GST network is coming soon">
+                Fetch details
+              </Button>
+            </div>
           </Field>
-          <label className="flex items-center gap-3 text-sm">
+          {gstOk && !form.errors.gstin && (
+            <div className="rounded-[10px] border border-[#BFE0CC] bg-[#F1F8F4] px-3.5 py-3 text-[13px] leading-relaxed dark:border-emerald-900 dark:bg-emerald-950/40">
+              <p className="font-bold text-[#1F7A4D] dark:text-emerald-400">✓ GSTIN is valid</p>
+              <p>
+                State: <strong>{stateName(v.gstin.slice(0, 2))} ({v.gstin.slice(0, 2)})</strong> · PAN <strong className="font-mono">{v.gstin.slice(2, 12)}</strong> · {PAN_HOLDER_LABEL[v.gstin[5]] ?? "Other"}
+              </p>
+            </div>
+          )}
+          <label className="flex items-center gap-2.5 text-[13px]">
             <Checkbox checked={v.composition} onCheckedChange={(c) => form.set("composition", !!c)} />
             I&apos;m registered under the Composition scheme
           </label>
-        </div>
+        </>
       )}
       <div className="grid gap-4 sm:grid-cols-3">
         <Field label="State" required error={form.errors.stateCode} hint={gstOk ? "Taken from your GSTIN" : undefined}>
@@ -694,7 +731,7 @@ function IndustryStep({ form, catalog, loading, template }: { form: SignupForm; 
             return (
               <section key={g} className="grid gap-2" aria-label={g}>
                 <h2 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{g}</h2>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 2xl:grid-cols-3" role="radiogroup" aria-label={g}>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3" role="radiogroup" aria-label={g}>
                   {items.map((i) => (
                     <ChoiceChip
                       key={i.key}
@@ -703,9 +740,11 @@ function IndustryStep({ form, catalog, loading, template }: { form: SignupForm; 
                         form.set("industryKey", i.key)
                         form.set("subIndustry", "")
                       }}
-                      className="flex items-center gap-2"
+                      className="flex items-center gap-2.5 rounded-[10px] p-2.5"
                     >
-                      <IndustryIcon industry={i.key} className="size-4 shrink-0 text-muted-foreground" />
+                      <span className={cn("grid size-[30px] shrink-0 place-items-center rounded-lg", v.industryKey === i.key ? "bg-primary text-primary-foreground" : "bg-muted text-foreground/70")}>
+                        {v.industryKey === i.key ? <Check className="size-4" /> : <IndustryIcon industry={i.key} className="size-4" />}
+                      </span>
                       <span className="min-w-0 flex-1 leading-tight">{i.name}</span>
                       {!i.ready && <span className="shrink-0 rounded-full bg-amber-100 px-1.5 text-[10px] font-semibold text-amber-900 dark:bg-amber-950 dark:text-amber-100">Soon</span>}
                     </ChoiceChip>
@@ -778,6 +817,7 @@ function IndustryStep({ form, catalog, loading, template }: { form: SignupForm; 
 function GoalsStep({ form, template }: { form: SignupForm; template?: TemplateInfo }) {
   const v = form.values
   const recommended = recommendModules(v.goals, template)
+  const fromGoals = GOALS.filter((g) => v.goals.includes(g.key)).flatMap((g) => g.modules as readonly string[])
   const modules = v.modules.length ? v.modules : recommended
   const couponOk = /^[A-Z0-9_-]{2,20}$/.test(v.couponCode)
   const coupon = useAsyncCheck(couponOk ? v.couponCode : "", async (c) => {
@@ -840,7 +880,7 @@ function GoalsStep({ form, template }: { form: SignupForm; template?: TemplateIn
               const live = LIVE_MODULES.includes(m.key)
               const on = modules.includes(m.key)
               const locked = on && modules.some((x) => NEEDS[x]?.includes(m.key))
-              const why = !live ? "Soon" : locked ? `needed by ${MODULE_NAV.find((x) => modules.includes(x.key) && NEEDS[x.key]?.includes(m.key))?.label}` : recommended.includes(m.key) ? "suggested" : ""
+              const why = !live ? "Soon" : locked ? `needed by ${MODULE_NAV.find((x) => modules.includes(x.key) && NEEDS[x.key]?.includes(m.key))?.label}` : fromGoals.includes(m.key) ? "your pick" : recommended.includes(m.key) ? `${template?.name ?? "industry"} pick` : ""
               return (
                 <li key={m.key}>
                   <label className={cn("flex items-center gap-2 py-2", !live && "text-muted-foreground")}>
@@ -948,7 +988,7 @@ function VerifyStep({
               </button>
             </p>
             <OtpInput value={v.otp} onChange={(c) => form.set("otp", c)} onComplete={onCodeComplete} invalid={!!form.errors.otp} disabled={submitting} />
-            {form.errors.otp && <p className="text-sm text-destructive">{form.errors.otp}</p>}
+
             {sendError && <p className="text-sm text-destructive">{sendError}</p>}
             <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
               <span>{sent ? (expiresIn ? `Code expires in ${mmss(expiresIn)}` : "This code has expired — request a new one") : ""}</span>
@@ -957,10 +997,29 @@ function VerifyStep({
               </button>
             </div>
             {sent?.devCode && <p className="rounded-2xl bg-muted px-3 py-2 text-xs text-muted-foreground">Development code: {sent.devCode}</p>}
-            <p className="text-xs text-muted-foreground">We&apos;ll email a link to verify {v.email} after this — it won&apos;t block you.</p>
+            {form.errors.otp && (
+              <div role="alert" className="rounded-lg border border-[#F1B5AE] bg-[#FDECEA] px-3 py-2.5 text-[13px] text-[#7A1A12] dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+                {form.errors.otp}
+                {/tries? left/.test(String(form.errors.otp)) ? " After 3 wrong tries the code stops working." : ""}
+              </div>
+            )}
+            <label className="mt-1 flex items-center gap-2.5 text-[13px]">
+              <Checkbox checked={v.marketingOptIn} onCheckedChange={(c) => form.set("marketingOptIn", !!c)} />
+              Send me product updates on email (optional)
+            </label>
+            <Button type="submit" size="lg" className="mt-1.5 w-full" disabled={submitting}>
+              {submitting ? (
+                <>
+                  <Loader2 className="animate-spin" /> Creating your workspace…
+                </>
+              ) : (
+                "Verify & create workspace"
+              )}
+            </Button>
+            <p className="text-xs text-muted-foreground">The email link to verify {v.email} comes after this — it won&apos;t block you.</p>
           </div>
         )}
-        <aside className={cn("h-fit rounded-3xl border bg-muted/30 p-5 text-sm", addBusiness && "lg:col-span-2")}>
+        <aside className={cn("h-fit rounded-xl border bg-background px-5 py-4 text-sm", addBusiness && "lg:col-span-2")}>
           <p className="mb-1 text-base font-semibold">Review</p>
           <dl className="divide-y">
             {rows.map((r) => (
@@ -975,7 +1034,12 @@ function VerifyStep({
               </div>
             ))}
           </dl>
-          {!addBusiness && <p className="mt-2 text-xs text-muted-foreground">15-day free trial. No card needed.</p>}
+          {!addBusiness && <p className="mt-2 text-xs text-muted-foreground">Free trial with every module. No card needed.</p>}
+          {addBusiness && (
+            <Button type="submit" size="lg" className="mt-3 w-full" disabled={submitting}>
+              {submitting ? "Creating…" : "Create business"}
+            </Button>
+          )}
         </aside>
       </div>
     </>

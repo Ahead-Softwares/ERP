@@ -1,13 +1,14 @@
 "use client"
 
 import * as React from "react"
-import { BUSINESS_TYPES, email as emailRule, length, pan as panRule, panTypeMismatch, phone as phoneRule, pincode as pincodeRule, squish, stateName, upperNoSpaces, url as urlRule, type BusinessType } from "@contracts/validation"
+import { BUSINESS_TYPES, email as emailRule, length, pan as panRule, panTypeMismatch, phone as phoneRule, pincode as pincodeRule, squish, stateName, upperNoSpaces, type BusinessType } from "@contracts/validation"
 import { Input } from "@/components/ui/input"
 import { Field, NativeSelect } from "@/components/form"
 import { api } from "@/lib/api"
 import { useAuth } from "@/lib/auth"
 import { GST_STATES } from "@/lib/format"
 import { useForm } from "@/lib/use-form"
+import { LogoUpload } from "@/components/logo-upload"
 import { StepFooter, StepHeader, type StepProps } from "./wizard"
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
@@ -31,11 +32,10 @@ export function ProfileStep({ tenant, workspace, refresh, complete, back }: Step
       phone: p.phone ?? me?.user.mobile ?? "",
       email: p.email ?? me?.user.email ?? "",
     },
-    labels: { businessType: "Business type", line1: "Address", city: "City", pincode: "PIN code", billingStateCode: "State", pan: "PAN", logoUrl: "Logo link", phone: "Phone", email: "Email" },
+    labels: { businessType: "Business type", line1: "Address", city: "City", pincode: "PIN code", billingStateCode: "State", pan: "PAN", logoUrl: "Logo", phone: "Phone", email: "Email" },
     clean: { line1: squish, line2: squish, city: squish, pincode: (v) => v.replace(/\s/g, ""), pan: upperNoSpaces, logoUrl: (v) => v.trim(), email: (v) => v.trim().toLowerCase() },
     fromServer: (path) => (path.startsWith("address.") ? (path.slice(8) as "line1") : (path as "pan")),
     rules: {
-      logoUrl: (v) => (v ? urlRule(v) : null),
       line1: (v) => (!v ? "Add your business address — it's printed on invoices" : length(3, 200, "Address")(v)),
       city: (v) => (!v ? "Add the city" : length(2, 80, "City")(v)),
       pincode: (v) => (!v ? "Add the PIN code" : pincodeRule(v)),
@@ -70,19 +70,7 @@ export function ProfileStep({ tenant, workspace, refresh, complete, back }: Step
   return (
     <form {...form.formProps} onSubmit={form.submit} className="flex min-h-full flex-col gap-6">
       <StepHeader title="Business profile" description="This appears on every invoice, quotation and receipt." />
-      <div className="flex flex-wrap items-center gap-4 rounded-3xl border border-dashed p-4">
-        <span className="grid size-20 shrink-0 place-items-center overflow-hidden rounded-2xl bg-muted text-xs text-muted-foreground">
-          {v.logoUrl && !urlRule(v.logoUrl) ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={v.logoUrl} alt="Logo preview" className="size-full object-contain" />
-          ) : (
-            "Logo"
-          )}
-        </span>
-        <Field label="Logo link" error={form.errors.logoUrl} hint="Logo upload arrives with file storage. For now paste a link to a PNG, JPG or SVG." className="min-w-64 flex-1">
-          <Input {...form.field("logoUrl")} type="url" inputMode="url" placeholder="https://" />
-        </Field>
-      </div>
+      <LogoUpload value={v.logoUrl} onChange={(url) => form.set("logoUrl", url)} />
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Address line 1" required error={form.errors.line1} className="sm:col-span-2">
           <Input {...form.field("line1")} autoComplete="address-line1" autoFocus />

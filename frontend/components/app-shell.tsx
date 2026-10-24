@@ -20,6 +20,8 @@ import {
 import { api, errorMessage } from "@/lib/api"
 import { useAuth } from "@/lib/auth"
 import { DASHBOARD_NAV, MODULE_NAV } from "@/lib/nav"
+import { ReadOnlyBanner } from "@/components/page-states"
+import type { ModuleKey } from "@/lib/types"
 import { formatDateTime, initials } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { useApi } from "@/lib/use-api"
@@ -325,7 +327,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <Notifications />
             <UserMenu />
           </header>
-          <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6">{children}</main>
+          <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6">
+            <ReadOnlyNotice />
+            {children}
+          </main>
         </div>
       </div>
     </div>
@@ -342,4 +347,16 @@ export function PageHeader({ title, description, actions }: { title: string; des
       {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
     </div>
   )
+}
+
+const MODULE_PATH = new RegExp("^/app/m/([a-z]+)")
+
+/** Banner on a module that became read-only after the trial (wireframe 0.4). */
+function ReadOnlyNotice() {
+  const pathname = usePathname()
+  const { me, can } = useAuth()
+  const key = MODULE_PATH.exec(pathname)?.[1] as ModuleKey | undefined
+  if (!key || me?.modules?.[key]?.status !== "read_only") return null
+  const nav = MODULE_NAV.find((m) => m.key === key)
+  return <ReadOnlyBanner name={nav?.label ?? "This module"} canUpgrade={can("tenant.billing.view")} />
 }

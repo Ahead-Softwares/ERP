@@ -175,6 +175,7 @@ enum FieldType {
 enum RecordSource {
   template
   tenant
+  sample
 
   @@map("record_source")
 }
@@ -1121,6 +1122,8 @@ model Contact {
   isActive    Boolean     @default(true) @map("is_active")
   notes       String?
   custom      Json        @default("{}")
+  /// Created by "Try with sample data"; removed together from Settings › Data
+  isSample    Boolean     @default(false) @map("is_sample")
   createdBy   String?     @map("created_by") @db.Uuid
   convertedAt DateTime?   @map("converted_at") @db.Timestamptz
   createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz

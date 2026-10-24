@@ -67,6 +67,8 @@ export const BusinessSignup = z
     modules: z.array(MODULE_KEY).max(20).default([]),
     heardFrom: optionalText(z.string().trim().max(60)),
     couponCode: optionalText(z.string().trim().toUpperCase().max(20)),
+    /** "Send me product updates" at signup */
+    marketingOptIn: z.boolean().default(false),
     termsAccepted: z.literal(true, { errorMap: () => ({ message: 'Please accept the Terms and Privacy Policy' }) }),
   })
   .superRefine((b, c) => {
@@ -98,7 +100,7 @@ export function signupToTenant(b: BusinessSignup) {
     gstin: b.gstRegistered ? (b.gstin ?? undefined) : undefined,
     billingStateCode: b.stateCode,
     legalName: b.legalName ?? null,
-    profile: { ...profile, industry: b.industryKey, composition: b.composition },
+    profile: { ...profile, industry: b.industryKey, composition: b.composition, marketingOptIn: b.marketingOptIn },
   };
 }
 
@@ -295,4 +297,41 @@ export async function retryProvisioning(tenantId: string) {
     await db().outboxEvent.update({ where: { id: evt.id }, data: { publishedAt: null, attempts: 0, lastError: null } });
     return { requeued: true };
   });
+}
+
+// ── Sample data (setup wizard "Try with sample data", Settings › Data) ──
+
+const SAMPLE_NAMES = [
+  'Meera Kulkarni', 'Rohan Desai', 'Sana Shaikh', 'Vikram Iyer', 'Ananya Reddy', 'Arjun Mehta', 'Kavya Nair', 'Rahul Bansal', 'Priya Menon', 'Imran Khan',
+  'Neha Joshi', 'Aditya Rao', 'Fatima Siddiqui', 'Karan Malhotra', 'Pooja Verma', 'Siddharth Jain', 'Riya Shah', 'Manish Gupta', 'Lakshmi Pillai', 'Harpreet Singh',
+];
+
+/** Adds 20 sample customers (tagged, no phone numbers) unless sample data already exists. */
+export async function addSampleData(tenantId: string, userId: string) {
+  if (await db().contact.count({ where: { isSample: true } })) return { created: 0, alreadyThere: true };
+  const created = await db().contact.createMany({
+    data: SAMPLE_NAMES.map((name, i) => ({
+      tenantId, type: 'customer' as const, name, email: `sample-${i + 1}@example.com`, isSample: true,
+      notes: 'Sample customer — remove it from Settings › Data', ownerId: userId, createdBy: userId,
+    })),
+  });
+  await audit({ action: 'tenant.sample_data.add', entity: 'tenant', entityId: tenantId, after: { contacts: created.count } });
+  return { created: created.count, alreadyThere: false };
+}
+
+/** Removes sample records; ones already used on a document are kept and untagged. */
+export async function removeSampleData(tenantId: string) {
+  const samples = await db().contact.findMany({ where: { isSample: true }, select: { id: true } });
+  const used = new Set(
+    (await db().salesDocument.findMany({ where: { contactId: { in: samples.map((s) => s.id) } }, select: { contactId: true } })).map((d) => d.contactId),
+  );
+  const removable = samples.filter((s) => !used.has(s.id)).map((s) => s.id);
+  if (removable.length) await db().contact.deleteMany({ where: { id: { in: removable } } });
+  if (used.size) await db().contact.updateMany({ where: { id: { in: [...used].filter(Boolean) as string[] } }, data: { isSample: false } });
+  await audit({ action: 'tenant.sample_data.remove', entity: 'tenant', entityId: tenantId, after: { removed: removable.length, kept: used.size } });
+  return { removed: removable.length, kept: used.size };
+}
+
+export async function sampleDataStatus() {
+  return { contacts: await db().contact.count({ where: { isSample: true } }) };
 }

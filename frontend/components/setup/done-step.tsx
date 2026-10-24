@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils"
 import type { Workspace } from "./wizard"
 
 export function DoneStep({ workspace, goTo }: { workspace: Workspace; goTo: (k: SetupStepKey) => void }) {
-  const { reload } = useAuth()
+  const { reload, me } = useAuth()
   const states = workspace.setup.steps
   const done = SETUP_STEPS.filter((s) => states[s.key] === "done").length
 
@@ -24,17 +24,17 @@ export function DoneStep({ workspace, goTo }: { workspace: Workspace; goTo: (k: 
   }, [reload])
 
   return (
-    <div className="grid content-start gap-6">
+    <div className="grid max-w-xl content-start gap-4 rounded-xl border bg-card p-9">
       <span className="grid size-14 place-items-center rounded-full bg-emerald-600 text-white">
         <Check className="size-7" />
       </span>
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">You&apos;re all set</h1>
+        <h1 className="text-[26px] font-bold tracking-tight">{me?.tenant?.name ?? "Your workspace"} is ready</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          {done} of {SETUP_STEPS.length} set up.{done < SETUP_STEPS.length ? " Skipped steps stay on your dashboard until you finish them." : ""}
+          {done + 1} of {SETUP_STEPS.length + 1} set up.{done < SETUP_STEPS.length ? " Skipped steps stay on your dashboard until you finish them." : ""}
         </p>
       </div>
-      <ul className="divide-y rounded-3xl border">
+      <ul className="divide-y">
         {SETUP_STEPS.map((s) => {
           const st = states[s.key]
           return (

@@ -1,8 +1,9 @@
 "use client"
 
 import * as React from "react"
+import Link from "next/link"
 import { toast } from "sonner"
-import { gstin as gstinRule, gstinStateMismatch, length, pincode as pincodeRule, squish, stateName, upperNoSpaces, url as urlRule } from "@contracts/validation"
+import { gstin as gstinRule, gstinStateMismatch, length, pincode as pincodeRule, squish, stateName, upperNoSpaces } from "@contracts/validation"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { EditableSection, ReadOnlyGrid, useConfirmChanges, type DiffRow } from "@/components/editable-section"
@@ -12,6 +13,7 @@ import { api } from "@/lib/api"
 import { useAuth } from "@/lib/auth"
 import { useApi } from "@/lib/use-api"
 import { useForm } from "@/lib/use-form"
+import { LogoUpload } from "@/components/logo-upload"
 import { formatDateTime, GST_STATES } from "@/lib/format"
 
 interface Address {
@@ -61,7 +63,14 @@ function useSaveTenant(tenant: Tenant, onSaved: (t: Tenant) => void) {
 }
 
 function lastChanged(t: Tenant) {
-  return `Last changed ${formatDateTime(t.updatedAt)}`
+  return (
+    <>
+      Last changed {formatDateTime(t.updatedAt)} ·{" "}
+      <Link href="/app/settings/audit" className="font-semibold text-primary hover:underline">
+        View history
+      </Link>
+    </>
+  )
 }
 
 function ProfileCard({ tenant, onSaved }: { tenant: Tenant; onSaved: (t: Tenant) => void }) {
@@ -70,12 +79,11 @@ function ProfileCard({ tenant, onSaved }: { tenant: Tenant; onSaved: (t: Tenant)
   const confirm = useConfirmChanges()
   const form = useForm({
     initial: { name: tenant.name, legalName: tenant.legalName ?? "", logoUrl: tenant.logoUrl ?? "" },
-    labels: { name: "Business name", legalName: "Legal name", logoUrl: "Logo link" },
+    labels: { name: "Business name", legalName: "Legal name", logoUrl: "Logo" },
     clean: { name: squish, legalName: squish, logoUrl: (v) => v.trim() },
     rules: {
       name: (v) => (!v.trim() ? "Business name is required" : length(2, 100, "Business name")(v)),
       legalName: (v) => (v ? length(2, 160, "Legal name")(v) : null),
-      logoUrl: (v) => (v ? urlRule(v) : null),
     },
     onSubmit: async (v, changed) => {
       const reason = changed.includes("legalName")
@@ -117,9 +125,9 @@ function ProfileCard({ tenant, onSaved }: { tenant: Tenant; onSaved: (t: Tenant)
         <Field label="Legal name" error={form.errors.legalName} hint="As registered, if different">
           <Input {...form.field("legalName")} />
         </Field>
-        <Field label="Logo link" error={form.errors.logoUrl} className="sm:col-span-2" hint="Logo upload comes with file storage; paste an image link for now">
-          <Input {...form.field("logoUrl")} type="url" inputMode="url" placeholder="https://" />
-        </Field>
+        <div className="sm:col-span-2">
+          <LogoUpload value={form.values.logoUrl} onChange={(url) => form.set("logoUrl", url)} />
+        </div>
       </div>
     </EditableSection>
   )

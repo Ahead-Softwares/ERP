@@ -1,11 +1,10 @@
 "use client"
 
 import * as React from "react"
-import Link from "next/link"
-import { Construction, Lock } from "lucide-react"
-import { buttonVariants } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Construction } from "lucide-react"
+import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { PageHeader } from "@/components/app-shell"
+import { ModuleLocked } from "@/components/page-states"
 import { useAuth } from "@/lib/auth"
 import { MODULE_NAV } from "@/lib/nav"
 
@@ -24,22 +23,9 @@ export default function ModulePage({ params }: { params: Promise<{ module: strin
     <>
       <PageHeader title={title} description={nav.description} />
       {ent?.status === "inactive" ? (
-        <Card className="max-w-xl">
-          <CardHeader>
-            <span className="mb-2 grid size-10 place-items-center rounded-2xl bg-muted">
-              <Lock className="size-5" />
-            </span>
-            <CardTitle>{nav.label} isn&apos;t part of your plan</CardTitle>
-            <CardDescription>Upgrade to unlock it. Everything you add stays yours, even if you change plans later.</CardDescription>
-          </CardHeader>
-          {can("tenant.billing.view") && (
-            <CardContent>
-              <Link href="/app/billing" className={buttonVariants()}>
-                See plans
-              </Link>
-            </CardContent>
-          )}
-        </Card>
+        <div className="max-w-xl rounded-xl border bg-card">
+          <ModuleLocked name={title} description={nav.description} canUpgrade={can("tenant.billing.view")} />
+        </div>
       ) : (
         <Card className="max-w-xl">
           <CardHeader>

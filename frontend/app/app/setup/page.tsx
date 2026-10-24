@@ -93,19 +93,19 @@ function SetupWizard() {
   const Step = step === "done" ? null : STEP_COMPONENT[step]
 
   return (
-    <div className="flex min-h-svh flex-col bg-background">
+    <div className="flex min-h-svh flex-col bg-card">
       <header className="sticky top-0 z-10 flex h-16 items-center gap-3 border-b bg-background/95 px-4 backdrop-blur sm:px-6">
         <span className="grid size-8 place-items-center rounded-lg bg-primary text-xs font-bold text-primary-foreground">{initials(tenant.data.name)}</span>
         <span className="font-semibold">Set up {tenant.data.name}</span>
         <span className="hidden text-sm text-muted-foreground sm:inline">
-          · {doneCount} of {SETUP_STEPS.length} done{skipped ? ` · ${skipped} skipped` : ""}
+          · {doneCount} of {SETUP_STEPS.length + 1} done{skipped ? ` · ${skipped} skipped` : ""}{SETUP_STEPS.length - doneCount - skipped > 0 ? ` · about ${SETUP_STEPS.length - doneCount - skipped} minute${SETUP_STEPS.length - doneCount - skipped > 1 ? "s" : ""}` : ""}
         </span>
         <Button variant="ghost" className="ml-auto" onClick={() => void finishLater()} disabled={leaving}>
           {leaving ? "Saving…" : "Finish later"}
         </Button>
       </header>
       <div className="mx-auto flex w-full max-w-6xl flex-1">
-        <nav className="hidden w-64 shrink-0 border-r p-4 md:block" aria-label="Setup steps">
+        <nav className="hidden w-64 shrink-0 border-r bg-background/60 p-4 md:block" aria-label="Setup steps">
           <ol className="grid gap-1">
             {[...SETUP_STEPS, { key: "done" as const, label: "Done", neededForInvoices: false }].map((s, i) => {
               const st = s.key === "done" ? undefined : states[s.key]

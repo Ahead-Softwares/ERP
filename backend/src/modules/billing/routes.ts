@@ -9,6 +9,7 @@ import { validate } from '../../middleware/request';
 import { publicRoute, requirePermission, tenantAuth, tx } from '../../middleware/auth';
 import { publicLimiter } from '../../middleware/rateLimit';
 import { audit } from '../audit/service';
+import { todayIST } from '../../kernel/gst';
 import * as billing from './service';
 
 // Quotations (sales module) and GST invoices + receipts (billing module).
@@ -27,7 +28,13 @@ const DocList = ListQuery.extend({
   from: DateStr.optional(),
   to: DateStr.optional(),
   unpaid: z.enum(['true', 'false']).optional(),
+  overdue: z.enum(['true', 'false']).optional(),
+  /** Include the number of matching rows ("Showing 1–25 of 64") */
+  withTotal: z.enum(['1']).optional(),
 });
+
+const OPEN: Prisma.SalesDocumentWhereInput = { status: { in: ['issued', 'partially_paid'] } };
+const overdueWhere = (): Prisma.SalesDocumentWhereInput => ({ ...OPEN, dueDate: { lt: new Date(`${todayIST()}T00:00:00Z`) } });
 
 const SUMMARY_SELECT = {
   id: true, kind: true, status: true, number: true, contactId: true, buyer: true, issueDate: true, dueDate: true,
@@ -42,14 +49,43 @@ function registerDocRoutes(kind: SalesDocKind, base: string, module: 'sales.quot
         { kind },
         scopeWhere(req.ctx!, billing.SCOPE_FIELDS),
         q.status ? { status: q.status as Prisma.EnumSalesDocStatusFilter['equals'] } : {},
-        q.unpaid === 'true' ? { status: { in: ['issued', 'partially_paid'] } } : {},
+        q.unpaid === 'true' ? OPEN : {},
+        q.overdue === 'true' ? overdueWhere() : {},
         q.contactId ? { contactId: q.contactId } : {},
         q.from || q.to ? { issueDate: { gte: q.from ? new Date(q.from) : undefined, lte: q.to ? new Date(q.to) : undefined } } : {},
-        q.q ? { OR: [{ number: { contains: q.q, mode: 'insensitive' } }, { buyer: { path: ['name'], string_contains: q.q } }] } : {},
+        q.q
+          ? {
+              OR: [
+                { number: { contains: q.q, mode: 'insensitive' } },
+                { buyer: { path: ['name'], string_contains: q.q } },
+                { buyer: { path: ['phone'], string_contains: q.q.replace(/\s/g, '') } },
+                { buyer: { path: ['gstin'], string_contains: q.q.toUpperCase() } },
+              ],
+            }
+          : {},
       ],
     };
-    const rows = await db().salesDocument.findMany({ where, select: SUMMARY_SELECT, ...pageArgs(q) });
-    res.json(page(rows, q.limit));
+    const [rows, total] = await Promise.all([
+      db().salesDocument.findMany({ where, select: SUMMARY_SELECT, ...pageArgs(q) }),
+      q.withTotal ? db().salesDocument.count({ where }) : Promise.resolve(undefined),
+    ]);
+    res.json({ ...page(rows, q.limit), ...(total !== undefined ? { total } : {}) });
+  }));
+
+  // Tab counts on the list page (All · 64, Overdue · 18 …), within the user's scope
+  router.get(`${base}/counts`, requirePermission(`${module}.view`), tx(async (req, res) => {
+    const scope = scopeWhere(req.ctx!, billing.SCOPE_FIELDS);
+    const [byStatus, overdue] = await Promise.all([
+      db().salesDocument.groupBy({ by: ['status'], where: { AND: [{ kind }, scope] }, _count: { _all: true } }),
+      kind === 'invoice' ? db().salesDocument.count({ where: { AND: [{ kind }, scope, overdueWhere()] } }) : Promise.resolve(0),
+    ]);
+    const counts: Record<string, number> = { all: 0, unpaid: 0, overdue };
+    for (const g of byStatus) {
+      counts[g.status] = g._count._all;
+      counts.all += g._count._all;
+      if (g.status === 'issued' || g.status === 'partially_paid') counts.unpaid += g._count._all;
+    }
+    res.json(counts);
   }));
 
   router.get(`${base}/:id`, requirePermission(`${module}.view`), validate(IdParam, 'params'), tx(async (req, res) => {

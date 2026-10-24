@@ -16,13 +16,13 @@ export interface RailStep {
 }
 
 /** Dark left panel with the step list (signup). */
-export function SignupRail({ steps, footer }: { steps: RailStep[]; footer?: React.ReactNode }) {
+export function SignupRail({ steps, footer, narrow }: { steps: RailStep[]; footer?: React.ReactNode; narrow?: boolean }) {
   return (
-    <aside className="hidden w-80 shrink-0 flex-col gap-10 bg-[#1B2A5C] p-10 text-white lg:flex xl:w-96">
+    <aside className={cn("hidden shrink-0 flex-col gap-9 bg-[#1B2A5C] text-white transition-[width] duration-300 lg:flex", narrow ? "w-[300px] px-8 py-10" : "w-[400px] p-10")}>
       <Link href="/" className="text-xl font-extrabold tracking-wider">
         AHEAD
       </Link>
-      <ol className="grid gap-6" aria-label="Signup steps">
+      <ol className="grid gap-[22px]" aria-label="Signup steps">
         {steps.map((s, i) => (
           <li key={s.key} className="flex items-start gap-3" aria-current={s.state === "current" ? "step" : undefined}>
             <span
@@ -74,7 +74,7 @@ export function OtpInput({ value, onChange, onComplete, invalid, disabled }: { v
     if (clean.length === 6) onComplete?.(clean)
   }
   return (
-    <div className="flex gap-2 sm:gap-3" role="group" aria-label="6-digit code">
+    <div className="flex gap-2.5" role="group" aria-label="6-digit code">
       {digits.map((d, i) => (
         <input
           key={i}
@@ -90,7 +90,7 @@ export function OtpInput({ value, onChange, onComplete, invalid, disabled }: { v
           disabled={disabled}
           value={d}
           autoFocus={i === 0}
-          className="size-12 rounded-2xl border bg-background text-center text-xl font-bold tabular-nums outline-none transition focus:border-primary focus:ring-3 focus:ring-primary/25 aria-invalid:border-destructive sm:size-14 sm:text-2xl"
+          className="h-[60px] w-[52px] rounded-[10px] border border-input bg-card text-center text-2xl font-bold tabular-nums outline-none transition focus:border-primary focus:ring-3 focus:ring-primary/20 aria-invalid:border-destructive"
           onChange={(e) => {
             const typed = e.target.value.replace(/\D/g, "")
             if (typed.length > 1) {
@@ -125,8 +125,8 @@ export function ChoiceChip({ selected, onClick, children, className, role = "rad
       aria-checked={selected}
       onClick={onClick}
       className={cn(
-        "rounded-2xl border px-3 py-2 text-left text-sm font-medium transition hover:border-primary/60 focus-visible:ring-3 focus-visible:ring-primary/30 focus-visible:outline-none",
-        selected ? "border-primary bg-primary/10 text-foreground ring-1 ring-primary" : "bg-background",
+        "min-h-9 rounded-lg border px-3 py-1.5 text-left text-[13px] font-medium transition hover:border-primary/60 focus-visible:ring-3 focus-visible:ring-primary/30 focus-visible:outline-none",
+        selected ? "border-primary bg-accent font-semibold text-accent-foreground" : "border-input bg-card",
         className
       )}
     >

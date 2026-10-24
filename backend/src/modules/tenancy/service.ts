@@ -26,13 +26,23 @@ export const Address = z.object({
   pincode: zPincode.optional().or(z.literal('')),
 });
 
+/**
+ * Logo: a link, or (until file storage exists) a small image the web app has already
+ * resized to 320 px and encoded as a data URL. SVG data is refused — only raster images.
+ */
+const LOGO_DATA_URL = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
+const LogoInput = z.union([
+  z.string().regex(LOGO_DATA_URL, 'Use a PNG, JPG or WebP image').max(200_000, 'This logo is too large — use a smaller image'),
+  z.string().url('Enter a full link, e.g. https://example.com').max(500).refine((v) => /^https?:\/\//.test(v), 'Use a link that starts with https://'),
+]);
+
 export const TenantPatch = z.object({
   name: z.string().trim().min(2, 'Use at least 2 characters').max(100, 'Keep it under 100 characters').optional(),
   legalName: optionalText(z.string().trim().max(160, 'Keep it under 160 characters')),
   gstin: optionalText(zGstin),
   billingStateCode: zStateCode.nullable().optional(),
   address: Address.nullable().optional(),
-  logoUrl: optionalText(z.string().url('Enter a full link, e.g. https://example.com').max(500)),
+  logoUrl: optionalText(LogoInput),
   timezone: z.string().max(60).optional(),
   fyStartMonth: z.number().int().min(1).max(12).optional(),
   /** Required when a sensitive field changes; kept in the audit log */
