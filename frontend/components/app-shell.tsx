@@ -4,7 +4,7 @@ import * as React from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { Bell, Check, ChevronsUpDown, CreditCard, Lock, LogOut, Menu, Settings, ShieldCheck, X } from "lucide-react"
+import { Bell, Check, ChevronsUpDown, CreditCard, Lock, LogOut, Menu, Settings, ShieldCheck, UserRound, X } from "lucide-react"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -209,6 +209,13 @@ export function UserMenu() {
           </DropdownMenuLabel>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={() => router.push("/app/account")}>
+          <UserRound className="size-4" /> My account
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => router.push("/app/account/security")}>
+          <ShieldCheck className="size-4" /> Security
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
         <DropdownMenuItem
           onClick={async () => {
             await signOut()
@@ -266,6 +273,16 @@ function Banners() {
           )}
         </div>
       )}
+      {me.security.mfaRequired && !me.security.mfaEnabled && me.security.deadline && (
+        <div className="flex flex-wrap items-center justify-center gap-x-3 bg-amber-100 px-4 py-2 text-center text-sm text-amber-950 dark:bg-amber-950 dark:text-amber-100" role="status">
+          <span>
+            {me.security.requiredBy[0]} requires two-step verification. Set it up within <strong>{daysUntil(me.security.deadline)}</strong> to keep access.
+          </span>
+          <Link href="/app/account/two-step" className="font-semibold underline underline-offset-4">
+            Set up now
+          </Link>
+        </div>
+      )}
       {!me.user.emailVerified && (
         <div className="flex flex-wrap items-center justify-center gap-x-3 bg-amber-100 px-4 py-2 text-center text-sm text-amber-950 dark:bg-amber-950 dark:text-amber-100">
           <span>Please verify {me.user.email}. Verification is needed before your first payment.</span>
@@ -290,8 +307,17 @@ function Banners() {
   )
 }
 
+const daysUntil = (iso: string) => {
+  const d = Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 86_400_000))
+  return d === 0 ? "today" : `${d} day${d === 1 ? "" : "s"}`
+}
+
+/** Settings and My account draw their own side menu edge to edge (wireframes X1, A1). */
+const FULL_BLEED = /^\/app\/(settings|account)(\/|$)/
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = React.useState(false)
+  const fullBleed = FULL_BLEED.test(usePathname())
   return (
     <div className="flex min-h-svh flex-col">
       <Banners />
@@ -327,7 +353,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <Notifications />
             <UserMenu />
           </header>
-          <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6">
+          <main className={cn("w-full flex-1", fullBleed ? "flex min-w-0 flex-col" : "mx-auto max-w-6xl px-4 py-6 sm:px-6")}>
             <ReadOnlyNotice />
             {children}
           </main>

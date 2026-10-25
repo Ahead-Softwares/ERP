@@ -3,14 +3,13 @@
 import * as React from "react"
 import { useTheme } from "next-themes"
 import { useAuth } from "@/lib/auth"
+import { setDateFormat } from "@/lib/format"
 
-// Applies the workspace look (Settings › Branding / setup wizard) to the whole page:
-// brand colour → --primary, font → --font-sans, density → data-density on <html>.
-// Theme: the workspace default is used until this person picks their own.
+// Applies the workspace look (Settings › Branding) to the whole page: brand colour → --primary,
+// font → --font-sans, density → data-density on <html>, plus the theme. A person's own choices
+// in My account › Profile & preferences win over the workspace defaults.
 
 const FONT_VAR: Record<string, string> = { inter: "", manrope: "var(--font-manrope)", plex: "var(--font-plex)", source: "var(--font-source)" }
-const PERSONAL_THEME_KEY = "theme" // next-themes' own key
-const WORKSPACE_THEME_KEY = "ahead:workspace-theme"
 
 export function applyBranding(b: { brandColor: string; font: string; density: string } | null) {
   const root = document.documentElement
@@ -30,28 +29,27 @@ export function applyBranding(b: { brandColor: string; font: string; density: st
 export function WorkspaceBranding() {
   const { me } = useAuth()
   const { setTheme } = useTheme()
-  const branding = me?.tenant?.branding ?? null
+  const workspace = me?.tenant?.branding ?? null
+  const personal = me?.user.preferences ?? null
+
+  const brandColor = workspace?.brandColor
+  const font = personal && personal.font !== "workspace" ? personal.font : workspace?.font
+  const density = personal && personal.density !== "workspace" ? personal.density : workspace?.density
+  const theme = personal && personal.theme !== "workspace" ? personal.theme : workspace?.theme
 
   React.useEffect(() => {
-    applyBranding(branding)
+    if (!brandColor) return applyBranding(null)
+    applyBranding({ brandColor, font: font ?? "inter", density: density ?? "comfortable" })
     return () => applyBranding(null)
-  }, [branding])
+  }, [brandColor, font, density])
 
   React.useEffect(() => {
-    if (!branding) return
-    try {
-      // next-themes stores whatever was last set; it counts as the person's own choice only
-      // when it differs from the workspace theme we applied last time
-      const stored = localStorage.getItem(PERSONAL_THEME_KEY)
-      const appliedByWorkspace = localStorage.getItem(WORKSPACE_THEME_KEY)
-      if (stored === null || stored === appliedByWorkspace) {
-        setTheme(branding.theme)
-        localStorage.setItem(WORKSPACE_THEME_KEY, branding.theme)
-      }
-    } catch {
-      // storage blocked: keep the system theme
-    }
-  }, [branding, setTheme])
+    if (theme) setTheme(theme)
+  }, [theme, setTheme])
+
+  React.useEffect(() => {
+    setDateFormat(personal?.dateFormat ?? "d_mmm_yyyy")
+  }, [personal?.dateFormat])
 
   return null
 }

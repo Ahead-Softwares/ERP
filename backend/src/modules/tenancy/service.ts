@@ -173,7 +173,7 @@ async function assertBranches(branchIds: string[]) {
 export async function listMembers() {
   const [members, invitations] = await Promise.all([
     db().tenantMember.findMany({
-      include: { user: { select: { id: true, name: true, email: true, mobile: true, lastLoginAt: true } }, role: { select: { id: true, key: true, name: true } } },
+      include: { user: { select: { id: true, name: true, email: true, mobile: true, lastLoginAt: true, mfaEnabled: true } }, role: { select: { id: true, key: true, name: true } } },
       orderBy: { createdAt: 'asc' },
     }),
     db().invitation.findMany({ where: { acceptedAt: null, revokedAt: null }, orderBy: { createdAt: 'desc' } }),

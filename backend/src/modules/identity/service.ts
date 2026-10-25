@@ -2,6 +2,9 @@ import { withDefaults, type WorkspaceProfile } from '../../contracts/workspace';
 import type { Request, Response } from 'express';
 import { env } from '../../config/env';
 import { db, prisma, withTenant } from '../../kernel/db';
+import { logSignIn } from '../account/signin';
+import { mfaRequirement } from '../account/policy';
+import { personalWithDefaults } from '../../contracts/account';
 import { AppError } from '../../kernel/errors';
 import { hashPassword, verifyPassword } from '../../kernel/crypto';
 import { getEntitlements } from '../subscription/entitlements';
@@ -41,25 +44,36 @@ export async function completeLogin(req: Request, res: Response, userId: string,
     ? await startSession(req, res, user.id, null, platform.roleId, 'console')
     : await startSession(req, res, user.id, membership?.tenantId ?? null, membership?.roleId ?? null);
   await audit({ tenantId: membership?.tenantId ?? null, actorId: user.id, action: 'auth.login', after: { method, workspace: platform?.status === 'active' ? 'console' : 'tenant' }, ip: req.ip, requestId: req.requestId });
+  await logSignIn(req, { userId: user.id, tenantId: membership?.tenantId ?? null, identifier: user.email, outcome: 'success', method });
   return { accessToken };
 }
 
-/** Password check with lockout after 5 failures for 15 minutes (LLD §11.2). */
-export async function checkPassword(identifier: { email?: string; mobile?: string }, password: string) {
+/**
+ * Password check with lockout after 5 failures for 15 minutes (LLD §11.2). The failure
+ * counter and the sign-in history are written with the owner client: the request
+ * transaction rolls back when this throws.
+ */
+export async function checkPassword(identifier: { email?: string; mobile?: string }, password: string, req?: Request) {
   const tx = db();
+  const raw = identifier.email ?? identifier.mobile ?? '';
   const user = await tx.user.findFirst({ where: identifier.email ? { email: identifier.email } : { mobile: identifier.mobile } });
-  if (!user || !user.passwordHash) throw new AppError('INVALID_CREDENTIALS', 'Incorrect email/mobile or password.');
+  if (!user || !user.passwordHash) {
+    if (req) await logSignIn(req, { identifier: raw, outcome: 'unknown_account', method: 'password' });
+    throw new AppError('INVALID_CREDENTIALS', 'Incorrect email/mobile or password.');
+  }
   if (user.status === 'disabled') throw new AppError('ACCOUNT_LOCKED', 'This account is disabled.');
   if (user.lockedUntil && user.lockedUntil > new Date()) {
+    if (req) await logSignIn(req, { userId: user.id, identifier: raw, outcome: 'locked', method: 'password' });
     throw new AppError('ACCOUNT_LOCKED', 'Too many failed attempts. Try again in a few minutes.', { lockedUntil: user.lockedUntil.toISOString() });
   }
   if (!(await verifyPassword(user.passwordHash, password))) {
     const failed = user.failedLogins + 1;
-    await tx.user.update({
-      where: { id: user.id },
-      data: { failedLogins: failed, lockedUntil: failed >= LOCK_AFTER ? new Date(Date.now() + LOCK_MS) : null },
-    });
-    throw new AppError('INVALID_CREDENTIALS', 'Incorrect email/mobile or password.');
+    const locked = failed >= LOCK_AFTER;
+    const lockedUntil = locked ? new Date(Date.now() + LOCK_MS) : null;
+    await prisma.user.update({ where: { id: user.id }, data: { failedLogins: locked ? 0 : failed, lockedUntil } });
+    if (req) await logSignIn(req, { userId: user.id, identifier: raw, outcome: locked ? 'locked' : 'wrong_password', method: `password:${failed}` });
+    if (locked) throw new AppError('ACCOUNT_LOCKED', 'Too many failed attempts. Sign-in is locked for 15 minutes.', { lockedUntil: lockedUntil!.toISOString() });
+    throw new AppError('INVALID_CREDENTIALS', 'Incorrect email/mobile or password.', { attemptsLeft: LOCK_AFTER - failed });
   }
   return user;
 }
@@ -76,7 +90,7 @@ export async function sendEmailVerification(user: { id: string; email: string; n
 }
 
 export async function setPassword(userId: string, password: string) {
-  await db().user.update({ where: { id: userId }, data: { passwordHash: await hashPassword(password), failedLogins: 0, lockedUntil: null } });
+  await db().user.update({ where: { id: userId }, data: { passwordHash: await hashPassword(password), passwordChangedAt: new Date(), failedLogins: 0, lockedUntil: null } });
 }
 
 /** GET /me — everything the frontend needs to render the app for the current workspace. */
@@ -90,6 +104,7 @@ export async function buildMe(userId: string, tenantId: string | null, workspace
     consoleAccess(userId),
     getSetting('announcement.banner'),
   ]);
+  const mfa = await mfaRequirement(userId);
   const announcement = banner?.text && (!banner.until || new Date(banner.until) > new Date()) ? { text: banner.text, tone: banner.tone } : null;
 
   const base = {
@@ -97,6 +112,15 @@ export async function buildMe(userId: string, tenantId: string | null, workspace
     user: {
       id: user.id, name: user.name, email: user.email, mobile: user.mobile,
       emailVerified: !!user.emailVerifiedAt, mobileVerified: !!user.mobileVerifiedAt,
+      preferences: personalWithDefaults(user.preferences),
+    },
+    /** Two-step verification required by a business (or the Console) and its grace period */
+    security: {
+      mfaEnabled: mfa.mfaEnabled,
+      mfaRequired: mfa.requiredBy.length > 0,
+      requiredBy: mfa.requiredBy.map((r) => r.name),
+      deadline: mfa.deadline,
+      mustSetUpMfa: mfa.mustSetUp,
     },
     memberships: memberships.map((m) => ({ tenantId: m.tenantId, name: m.tenant.name, status: m.tenant.status, logoUrl: m.tenant.logoUrl, roleName: m.role.name })),
     /** Present only for AHEAD team members; drives the workspace switcher */

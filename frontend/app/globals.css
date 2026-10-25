@@ -146,6 +146,15 @@
 }
 
 @layer components {
+  /* Settings deep link (/app/settings/payments#upi-id): the setting flashes once */
+  .setting-highlight {
+    border-radius: 12px;
+    animation: setting-flash 2.4s ease-out;
+  }
+  @keyframes setting-flash {
+    0%, 60% { box-shadow: 0 0 0 3px color-mix(in oklab, var(--primary) 45%, transparent); }
+    100% { box-shadow: 0 0 0 3px transparent; }
+  }
   .mk {
     color-scheme: light;
     background: var(--color-mk-bg);

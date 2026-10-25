@@ -36,7 +36,12 @@ export interface StepProps {
   stepKey: SetupStepKey
 }
 
+/** The same step forms also open in Settings, without the wizard's header, Back and Skip. */
+export const StepMode = React.createContext<"wizard" | "settings">("wizard")
+
 export function StepHeader({ title, description }: { title: string; description?: string }) {
+  const mode = React.useContext(StepMode)
+  if (mode === "settings") return null
   return (
     <div>
       <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
@@ -47,6 +52,26 @@ export function StepHeader({ title, description }: { title: string; description?
 
 /** Back · Skip for now · Save & continue — the wizard's sticky footer. */
 export function StepFooter({ back, onSkip, saving, error, saveLabel = "Save & continue", note }: { back: (() => void) | null; onSkip?: () => void; saving: boolean; error?: string | null; saveLabel?: string; note?: React.ReactNode }) {
+  const mode = React.useContext(StepMode)
+  if (mode === "settings") {
+    return (
+      <div className="mt-2 grid gap-2">
+        <FormError message={error} />
+        <div className="flex items-center justify-end gap-2">
+          {note && <span className="mr-auto text-xs text-muted-foreground">{note}</span>}
+          <Button type="submit" disabled={saving}>
+            {saving ? (
+              <>
+                <Loader2 className="animate-spin" /> Saving…
+              </>
+            ) : (
+              "Save changes"
+            )}
+          </Button>
+        </div>
+      </div>
+    )
+  }
   return (
     <div className="sticky bottom-0 -mx-4 mt-auto grid gap-2 border-t bg-background/95 px-4 py-4 backdrop-blur sm:-mx-8 sm:px-8">
       <FormError message={error} />

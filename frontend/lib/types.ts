@@ -1,4 +1,5 @@
 import type { SetupState, WorkspacePreferences } from "@contracts/workspace"
+import type { PersonalPreferences } from "@contracts/account"
 
 export type ModuleKey =
   | "crm"
@@ -49,7 +50,9 @@ export interface Me {
   console: ConsoleAccess | null
   /** Platform-wide banner set from the Console */
   announcement: { text: string; tone: "info" | "warning" } | null
-  user: { id: string; name: string; email: string; mobile: string; emailVerified: boolean; mobileVerified: boolean }
+  user: { id: string; name: string; email: string; mobile: string; emailVerified: boolean; mobileVerified: boolean; preferences: PersonalPreferences }
+  /** Two-step verification required by a business (or the Console) and its grace period */
+  security: { mfaEnabled: boolean; mfaRequired: boolean; requiredBy: string[]; deadline: string | null; mustSetUpMfa: boolean }
   memberships: { tenantId: string; name: string; status: TenantStatus; logoUrl: string | null; roleName: string }[]
   tenant: null | {
     id: string

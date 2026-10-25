@@ -65,7 +65,7 @@ export function StepProgress({ index, total, right }: { index: number; total: nu
 }
 
 /** Six boxes for a one-time code: typing advances, paste fills all, backspace goes back. */
-export function OtpInput({ value, onChange, onComplete, invalid, disabled }: { value: string; onChange: (v: string) => void; onComplete?: (v: string) => void; invalid?: boolean; disabled?: boolean }) {
+export function OtpInput({ value, onChange, onComplete, invalid, disabled, size = "lg", autoFocus = true }: { value: string; onChange: (v: string) => void; onComplete?: (v: string) => void; invalid?: boolean; disabled?: boolean; /** lg 52×60 (signup), md 44×50 (sign-in code), sm 38×44 (setup cards) */ size?: "lg" | "md" | "sm"; autoFocus?: boolean }) {
   const refs = React.useRef<(HTMLInputElement | null)[]>([])
   const digits = Array.from({ length: 6 }, (_, i) => value[i] ?? "")
   const update = (next: string) => {
@@ -74,7 +74,7 @@ export function OtpInput({ value, onChange, onComplete, invalid, disabled }: { v
     if (clean.length === 6) onComplete?.(clean)
   }
   return (
-    <div className="flex gap-2.5" role="group" aria-label="6-digit code">
+    <div className={cn("flex", size === "sm" ? "gap-1.5" : size === "md" ? "gap-2" : "gap-2.5")} role="group" aria-label="6-digit code">
       {digits.map((d, i) => (
         <input
           key={i}
@@ -89,8 +89,11 @@ export function OtpInput({ value, onChange, onComplete, invalid, disabled }: { v
           maxLength={6}
           disabled={disabled}
           value={d}
-          autoFocus={i === 0}
-          className="h-[60px] w-[52px] rounded-[10px] border border-input bg-card text-center text-2xl font-bold tabular-nums outline-none transition focus:border-primary focus:ring-3 focus:ring-primary/20 aria-invalid:border-destructive"
+          autoFocus={autoFocus && i === 0}
+          className={cn(
+            "rounded-[10px] border border-input bg-card text-center font-bold tabular-nums outline-none transition focus:border-primary focus:ring-3 focus:ring-primary/20 aria-invalid:border-destructive",
+            size === "lg" ? "h-[60px] w-[52px] text-2xl" : size === "md" ? "h-[50px] w-11 text-xl" : "h-11 w-[38px] min-w-0 shrink rounded-lg text-lg"
+          )}
           onChange={(e) => {
             const typed = e.target.value.replace(/\D/g, "")
             if (typed.length > 1) {

@@ -132,6 +132,8 @@ export interface PermissionDef {
   action: PermissionAction;
   tier: ModuleTier;
   description: string;
+  /** The resource's name, e.g. "Contacts & customers" (a row in the roles matrix) */
+  label: string;
 }
 
 export const PERMISSIONS: PermissionDef[] = Object.entries(PERMISSION_CATALOG).flatMap(([moduleKey, resources]) =>
@@ -143,6 +145,7 @@ export const PERMISSIONS: PermissionDef[] = Object.entries(PERMISSION_CATALOG).f
       action,
       tier: r.tier ?? 'basic',
       description: `${action[0].toUpperCase()}${action.slice(1)} ${r.label.toLowerCase()}`,
+      label: r.label,
     })),
   ),
 );

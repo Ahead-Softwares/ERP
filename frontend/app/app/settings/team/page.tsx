@@ -23,7 +23,7 @@ interface Members {
     status: "invited" | "active" | "deactivated"
     version: number
     joinedAt: string | null
-    user: { id: string; name: string; email: string; mobile: string; lastLoginAt: string | null }
+    user: { id: string; name: string; email: string; mobile: string; lastLoginAt: string | null; mfaEnabled: boolean }
     role: { id: string; key: string; name: string }
   }[]
   invitations: { id: string; name: string | null; email: string | null; mobile: string | null; roleId: string; expiresAt: string; expired: boolean }[]
@@ -39,6 +39,7 @@ export default function TeamPage() {
   const [error, setError] = React.useState<string | null>(null)
   const [busy, setBusy] = React.useState(false)
   const [link, setLink] = React.useState<string | null>(null)
+  const [resetFor, setResetFor] = React.useState<Members["members"][number] | null>(null)
 
   const assignable = (roles.data?.data ?? []).filter((r) => r.key !== "owner")
   const roleName = (r: { key: string; name: string }) => (r.key === "service_provider" ? term("role.service_provider", r.name) : r.name)
@@ -143,7 +144,10 @@ export default function TeamPage() {
                     )}
                   </TableCell>
                   <TableCell>
-                    <Badge variant={m.status === "active" ? "secondary" : "outline"}>{m.status}</Badge>
+                    <div className="flex flex-wrap gap-1">
+                      <Badge variant={m.status === "active" ? "secondary" : "outline"}>{m.status}</Badge>
+                      {m.user.mfaEnabled && <Badge variant="outline" title="Two-step verification is on">Two-step</Badge>}
+                    </div>
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">{m.user.lastLoginAt ? formatDate(m.user.lastLoginAt) : "Never"}</TableCell>
                   <TableCell>
@@ -158,6 +162,7 @@ export default function TeamPage() {
                           ) : (
                             <DropdownMenuItem onClick={() => patchMember(m, { status: "active" })}>Reactivate</DropdownMenuItem>
                           )}
+                          {m.user.mfaEnabled && <DropdownMenuItem onClick={() => setResetFor(m)}>Reset two-step…</DropdownMenuItem>}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     )}
@@ -253,6 +258,50 @@ export default function TeamPage() {
           )}
         </DialogContent>
       </Dialog>
+      <ResetTwoStepDialog member={resetFor} onClose={() => setResetFor(null)} />
     </div>
+  )
+}
+
+/** Lost phone, no backup codes: an Owner/Admin resets two-step (A4-C). Audited and emailed to the person. */
+function ResetTwoStepDialog({ member, onClose }: { member: Members["members"][number] | null; onClose: () => void }) {
+  const [reason, setReason] = React.useState("")
+  const [error, setError] = React.useState<string | null>(null)
+  const [busy, setBusy] = React.useState(false)
+  const submit = async () => {
+    const r = reason.trim()
+    if (r.length < 10 || r.length > 500) return setError("Give a reason of 10–500 characters")
+    setBusy(true)
+    try {
+      await api.post(`/members/${member!.id}/mfa-reset`, { reason: r })
+      toast.success(`Two-step reset for ${member!.user.name}. They'll set it up again at their next sign-in.`)
+      setReason("")
+      onClose()
+    } catch (e) {
+      setError(errorMessage(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Dialog open={!!member} onOpenChange={(o) => !o && (setError(null), onClose())}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Reset two-step for {member?.user.name}?</DialogTitle>
+          <DialogDescription>Use this when they lost their phone and their backup codes. They&apos;ll set two-step up again at their next sign-in. The reset is in the audit log and emailed to them.</DialogDescription>
+        </DialogHeader>
+        <Field label="Reason" required error={error} hint="e.g. Phone stolen on 24 Oct; confirmed over a call">
+          <Input value={reason} onChange={(e) => setReason(e.target.value)} autoFocus />
+        </Field>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="destructive" onClick={submit} disabled={busy}>
+            {busy ? "Resetting…" : "Reset two-step"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

@@ -1,11 +1,13 @@
 import type { NextFunction, Request, Response } from 'express';
-import { withPlatform, withTenant } from '../kernel/db';
+import { prisma, withPlatform, withTenant } from '../kernel/db';
 import { AppError } from '../kernel/errors';
 import { verifyAccessToken } from '../modules/identity/tokens';
 import { getMember, getRolePermissions } from '../modules/access/service';
 import { getEntitlements } from '../modules/subscription/entitlements';
 import { getPlatformMember } from '../modules/console/service';
 import { PERMISSION_BY_KEY, isReadAction } from '../contracts/permissions';
+import { ipAllowed } from '../contracts/account';
+import { mfaRequirement, tenantSecurity } from '../modules/account/policy';
 
 type Handler = (req: Request, res: Response) => Promise<unknown>;
 
@@ -25,6 +27,20 @@ export async function tenantContext(req: Request, _res: Response, next: NextFunc
   if (!member || member.status !== 'active') throw new AppError('TENANT_FORBIDDEN', 'You are not an active member of this business.');
   const ent = await getEntitlements(auth.tid);
   if (ent.status === 'purged') throw new AppError('TENANT_FORBIDDEN', 'This business account has been closed.');
+  // Closed by the Owner: only the Owner can still open it (read-only, to export or reopen)
+  if (ent.status === 'closed') {
+    const t = await prisma.tenant.findUnique({ where: { id: auth.tid }, select: { ownerUserId: true } });
+    if (t?.ownerUserId !== auth.sub) throw new AppError('TENANT_FORBIDDEN', 'This business was closed by its owner.');
+  }
+  // Settings › Users & security: allowed networks and required two-step verification
+  const security = await tenantSecurity(auth.tid);
+  if (!ipAllowed(req.ip, security.ipAllowlist)) {
+    throw new AppError('IP_NOT_ALLOWED', "This business only allows sign-ins from its office networks. You're connecting from another network.", { ip: req.ip });
+  }
+  if (security.mfa.policy !== 'off') {
+    const mfa = await mfaRequirement(auth.sub);
+    if (mfa.blockedTenantIds.includes(auth.tid)) throw new AppError('MFA_SETUP_REQUIRED', 'Set up two-step verification to continue.');
+  }
   req.ctx = {
     kind: 'tenant',
     tenantId: auth.tid,
@@ -76,6 +92,7 @@ export async function consoleContext(req: Request, _res: Response, next: NextFun
   if (!auth || auth.ws !== 'console') throw new AppError('PERMISSION_DENIED', 'Switch to the AHEAD Console to do this.');
   const member = await getPlatformMember(auth.sub);
   if (!member || member.status !== 'active') throw new AppError('PERMISSION_DENIED', 'You are not an active member of the AHEAD team.');
+  if ((await mfaRequirement(auth.sub)).consoleBlocked) throw new AppError('MFA_SETUP_REQUIRED', 'AHEAD Console users must set up two-step verification.');
   req.console = { kind: 'platform', userId: auth.sub, memberId: member.id, roleId: member.roleId, sessionId: auth.sid, requestId: req.requestId, ip: req.ip };
   next();
 }

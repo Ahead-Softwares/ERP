@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../kernel/db';
 import identityRoutes, { meHandler } from '../modules/identity/routes';
+import accountRoutes from '../modules/account/routes';
 import tenancyRoutes from '../modules/tenancy/routes';
 import catalogRoutes from '../modules/catalog/routes';
 import crmRoutes from '../modules/crm/routes';
@@ -27,6 +28,7 @@ router.get('/health', async (_req, res) => {
 
 router.use('/auth', identityRoutes);
 router.use('/me', meHandler);
+router.use('/account', accountRoutes); // My account: every business
 router.use('/console', consoleRoutes); // AHEAD team workspace; before the tenant routers
 router.use('/', publicBilling); // public share links, before any authenticated router
 router.use('/', publicPayments); // gateway webhooks (+ dev test gateway), signed, no login

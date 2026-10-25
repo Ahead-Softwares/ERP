@@ -13,7 +13,9 @@ export type EventType =
   | 'member.deactivated'
   | 'role.updated'
   | 'subscription.changed'
-  | 'trial.reminder_due';
+  | 'trial.reminder_due'
+  | 'invoice.issued'
+  | 'payment.received';
 
 export interface EventEnvelope<P = Record<string, unknown>> {
   id: string;

@@ -10,6 +10,7 @@ import { DateStr, Paise, consumeMonthly, inScope, markOnboarding } from '../../k
 import { getEntitlements } from '../subscription/entitlements';
 import { validateCustom } from '../config/service';
 import { audit } from '../audit/service';
+import { publish } from '../events/outbox';
 import { optionalText, zEmail, zGstin, zHsnOrSac, zPhone, zStateCode } from '../../kernel/zodRules';
 import { gstinStateMismatch } from '../../contracts/validation';
 import { withDefaults, type WorkspaceProfile } from '../../contracts/workspace';
@@ -145,7 +146,10 @@ export async function getDocument(ctx: TenantCtx, id: string, kind: SalesDocKind
 export async function createDocument(ctx: TenantCtx, kind: SalesDocKind, input: DocInput, opts: { issue?: boolean; sourceType?: string; sourceId?: string } = {}) {
   const { tenant, doc, lines } = await prepare(ctx, input);
   // Default terms from Settings › Documents when the document has none
-  if (!doc.terms) doc.terms = withDefaults(tenant.preferences).documents.terms || null;
+  if (!doc.terms) {
+    const d = withDefaults(tenant.preferences).documents;
+    doc.terms = (kind === 'quotation' ? d.quotationTerms : d.terms) || null;
+  }
   // Quotations are numbered when created; invoices only when issued (never burn numbers on drafts)
   const numbered = kind === 'quotation' ? await allocateNumber(ctx.tenantId, 'quotation', tenant.fyStartMonth) : null;
   const created = await db().salesDocument.create({
@@ -209,6 +213,8 @@ export async function issueInvoice(ctx: TenantCtx, id: string) {
     // Frozen with the invoice, so later bank changes never alter an issued invoice
     bank: pay.bankAccount ? { holder: pay.bankHolder, account: pay.bankAccount, ifsc: pay.ifsc } : null,
     upiId: pay.upiId || null, showUpiQr: pay.showUpiQr && !!pay.upiId,
+    // Settings › Documents › Print, frozen with the invoice like everything else here
+    showHsnSummary: prefs.documents.showHsnSummary, showSignatory: prefs.documents.showSignatory, paper: prefs.documents.paper,
   };
   await db().salesDocumentLine.deleteMany({ where: { documentId: id } });
   await db().salesDocument.update({
@@ -221,6 +227,7 @@ export async function issueInvoice(ctx: TenantCtx, id: string) {
   });
   await markOnboarding(ctx, 'firstInvoice');
   await audit({ action: 'billing.invoice.issue', entity: 'invoice', entityId: id, after: { number, totalPaise: fresh.totalPaise } });
+  await publish('invoice.issued', { documentId: id });
   return getDocument(ctx, id, 'invoice');
 }
 
@@ -258,6 +265,7 @@ export async function recordPayment(ctx: TenantCtx, id: string, input: z.infer<t
   const paid = doc.paidPaise + BigInt(input.amountPaise);
   await db().salesDocument.update({ where: { id }, data: { paidPaise: paid, status: paid >= doc.totalPaise ? 'paid' : 'partially_paid', version: { increment: 1 } } });
   await audit({ action: 'billing.payment.record', entity: 'payment', entityId: payment.id, after: { invoice: doc.number, amountPaise: input.amountPaise, method: input.method } });
+  await publish('payment.received', { documentId: id, paymentId: payment.id, amountPaise: input.amountPaise });
   return getDocument(ctx, id, 'invoice');
 }
 

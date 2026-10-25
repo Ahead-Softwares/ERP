@@ -18,3 +18,13 @@ export const loginLimiter = limiter(15 * 60 * 1000, 20);
 export const publicLimiter = limiter(60 * 1000, 60);
 /** Signup "is this email/mobile already registered?" checks — low limit to slow down enumeration */
 export const lookupLimiter = limiter(10 * 60 * 1000, 30);
+/** My account actions that check the password or send a code: per person, not per IP */
+export const accountLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  limit: 20,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  keyGenerator: (req) => `acct:${req.auth?.sub ?? req.ip}`,
+  handler: (_req, _res, next, options) =>
+    next(new AppError('RATE_LIMITED', 'Too many attempts. Please wait a few minutes and try again.', { retryAfter: Math.ceil(options.windowMs / 1000) })),
+});

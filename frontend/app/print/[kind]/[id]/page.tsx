@@ -58,7 +58,11 @@ export default function PrintPage({ params }: { params: Promise<{ kind: string; 
     if (status !== "authenticated") return
     api
       .get<SalesDoc>(`/${kind === "quotation" ? "quotations" : "invoices"}/${id}`)
-      .then(setDoc)
+      .then((d) => {
+        setDoc(d)
+        // Paper size from Settings › Documents › Print (frozen on the invoice)
+        if (d.seller?.paper) setFormat(d.seller.paper)
+      })
       .catch((e) => setError(e.message))
   }, [status, kind, id])
 

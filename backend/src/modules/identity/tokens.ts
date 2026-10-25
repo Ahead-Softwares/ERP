@@ -5,6 +5,7 @@ import { db } from '../../kernel/db';
 import { AppError } from '../../kernel/errors';
 import { randomToken, sha256 } from '../../kernel/crypto';
 import type { AuthClaims } from '../../kernel/context';
+import { personalPolicy } from '../account/policy';
 
 const ACCESS_TTL_SEC = 15 * 60;
 const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -41,13 +42,13 @@ export function verifyPurposeToken<T extends Record<string, string>>(typ: string
   }
 }
 
-function setRefreshCookie(res: Response, token: string) {
+function setRefreshCookie(res: Response, token: string, maxAge = REFRESH_TTL_MS) {
   res.cookie(REFRESH_COOKIE, token, {
     httpOnly: true,
     secure: !isDev,
     sameSite: 'lax',
     path: '/api/v1/auth',
-    maxAge: REFRESH_TTL_MS,
+    maxAge,
   });
 }
 
@@ -58,6 +59,9 @@ export function clearRefreshCookie(res: Response) {
 /** Create a session (new refresh-token family) and return an access token. Needs a DB context. */
 export async function startSession(req: Request, res: Response, userId: string, tenantId: string | null, roleId: string | null, workspace: AuthClaims['ws'] = 'tenant') {
   const refresh = randomToken();
+  // The strictest "longest session" rule across this person's businesses (Settings › Users & security)
+  const { maxDays } = await personalPolicy(userId);
+  const ttlMs = Math.min(REFRESH_TTL_MS, maxDays * 86_400_000);
   const session = await db().userSession.create({
     data: {
       userId,
@@ -67,10 +71,10 @@ export async function startSession(req: Request, res: Response, userId: string, 
       refreshTokenHash: sha256(refresh),
       userAgent: req.header('user-agent')?.slice(0, 300),
       ip: req.ip,
-      expiresAt: new Date(Date.now() + REFRESH_TTL_MS),
+      expiresAt: new Date(Date.now() + ttlMs),
     },
   });
-  setRefreshCookie(res, refresh);
+  setRefreshCookie(res, refresh, ttlMs);
   return signAccessToken({ sub: userId, tid: session.tenantId, rid: roleId, sid: session.id, ws: workspace });
 }
 
@@ -90,6 +94,12 @@ export async function rotateSession(req: Request, res: Response, refresh: string
     throw new AppError('UNAUTHENTICATED', 'Please sign in again.');
   }
   if (current.expiresAt < new Date()) throw new AppError('UNAUTHENTICATED', 'Please sign in again.');
+  // Each refresh writes a new row, so the newest row's age is the time since the last activity
+  const { idleMinutes } = await personalPolicy(current.userId);
+  if (!current.revokedAt && Date.now() - current.createdAt.getTime() > idleMinutes * 60_000) {
+    await tx.userSession.update({ where: { id: current.id }, data: { revokedAt: new Date() } });
+    throw new AppError('UNAUTHENTICATED', 'You were signed out after a period of inactivity. Please sign in again.', { reason: 'idle' });
+  }
 
   const next = randomToken();
   if (!current.revokedAt) await tx.userSession.update({ where: { id: current.id }, data: { revokedAt: new Date() } });
@@ -105,6 +115,6 @@ export async function rotateSession(req: Request, res: Response, refresh: string
       expiresAt: current.expiresAt,
     },
   });
-  setRefreshCookie(res, next);
+  setRefreshCookie(res, next, current.expiresAt.getTime() - Date.now());
   return session;
 }

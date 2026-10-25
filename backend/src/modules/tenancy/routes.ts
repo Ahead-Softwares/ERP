@@ -10,11 +10,17 @@ import { DEFAULT_TERMS, TEMPLATES, templateByKey } from '../../contracts/templat
 import { getEntitlements } from '../subscription/entitlements';
 import { getCatalog } from '../subscription/catalog';
 import { visibleRoles } from '../access/service';
-import { listAudit } from '../audit/service';
+import { audit, listAudit } from '../audit/service';
 import { listNotifications, markRead } from '../notifications/service';
 import { FieldInput, FieldPatch, createField, getTerms, listFields, putTerms, updateField } from '../config/service';
 import * as tenancy from './service';
 import * as workspace from './workspace';
+import * as security from './security';
+import * as roles from './roles';
+import * as messages from './messages';
+import * as data from './data';
+import { adminResetMfa } from '../account/service';
+import { zReason } from '../../kernel/zodRules';
 import { INDUSTRIES, INDUSTRY_GROUPS } from '../../contracts/workspace';
 import { zEmail, zMobileIN } from '../../kernel/zodRules';
 
@@ -99,7 +105,14 @@ router.get('/forms/fields', validate(z.object({ entity: z.string().max(40) }), '
 
 // ── Tenant profile ──
 router.get('/tenant', requirePermission('tenant.settings.view'), tx(async (req, res) => {
-  res.json(await tenancy.getTenant(req.ctx!.tenantId));
+  const [t, issued, last] = await Promise.all([
+    tenancy.getTenant(req.ctx!.tenantId),
+    db().salesDocument.count({ where: { kind: 'invoice', number: { not: null } } }),
+    db().auditLog.findFirst({ where: { action: { in: ['tenant.update', 'tenant.profile.update'] } }, orderBy: { at: 'desc' }, select: { at: true, actorId: true } }),
+  ]);
+  const by = last?.actorId ? await withPlatform(() => db().user.findUnique({ where: { id: last.actorId! }, select: { name: true } })) : null;
+  // The financial year can't change once an invoice is numbered
+  res.json({ ...t, fyLocked: issued > 0, lastChange: last ? { at: last.at, by: by?.name ?? null } : null });
 }));
 router.patch('/tenant', requirePermission('tenant.settings.edit'), validate(tenancy.TenantPatch), tx(async (req, res) => {
   res.json(await tenancy.updateTenant(req.ctx!.tenantId, req.body));
@@ -127,6 +140,18 @@ router.post('/tenant/sequences/invoice-start', requirePermission('tenant.setting
   await workspace.setInvoiceStart(req.ctx!.tenantId, req.body.startAt);
   res.status(204).end();
 }));
+router.get('/tenant/sequences', requirePermission('tenant.settings.view'), tx(async (req, res) => {
+  res.json(await workspace.listSequences(req.ctx!.tenantId));
+}));
+router.put(
+  '/tenant/sequences/:docType',
+  requirePermission('tenant.settings.edit'),
+  validate(z.object({ docType: z.enum(['invoice', 'quotation', 'receipt']) }), 'params'),
+  validate(z.object({ nextNo: z.number().int().min(1, 'Use 1 or more').max(9_999_999) })),
+  tx(async (req, res) => {
+    res.json(await workspace.setNextNumber(req.ctx!.tenantId, req.params.docType as workspace.SeriesType, req.body.nextNo));
+  }),
+);
 router.patch('/tenant/setup', requirePermission('tenant.settings.edit'), validate(workspace.SetupPatch), tx(async (req, res) => {
   res.json(await workspace.updateSetup(req.ctx!.tenantId, req.body));
 }));
@@ -186,10 +211,17 @@ router.get('/roles', requirePermission('tenant.role.view'), tx(async (req, res) 
   res.json({ data: await visibleRoles(req.ctx!.tenantId) });
 }));
 router.get('/roles/:id', requirePermission('tenant.role.view'), validate(id, 'params'), tx(async (req, res) => {
-  const visible = await visibleRoles(req.ctx!.tenantId);
-  if (!visible.some((r) => r.id === req.params.id)) throw notFound('Role');
-  const role = await db().role.findUniqueOrThrow({ where: { id: String(req.params.id) }, include: { permissions: true } });
-  res.json({ ...visible.find((r) => r.id === role.id), permissions: Object.fromEntries(role.permissions.map((p) => [p.permissionKey, p.scope])) });
+  res.json(await roles.roleDetail(req.ctx!.tenantId, String(req.params.id)));
+}));
+router.post('/roles', requirePermission('tenant.role.create'), validate(roles.CloneInput), tx(async (req, res) => {
+  res.status(201).json(await roles.createRole(req.ctx!, req.body));
+}));
+router.patch('/roles/:id', requirePermission('tenant.role.edit'), validate(id, 'params'), validate(roles.RolePatch), tx(async (req, res) => {
+  res.json(await roles.updateRole(req.ctx!, String(req.params.id), req.body));
+}));
+router.delete('/roles/:id', requirePermission('tenant.role.delete'), validate(id, 'params'), tx(async (req, res) => {
+  await roles.deleteRole(req.ctx!, String(req.params.id));
+  res.status(204).end();
 }));
 router.get('/permissions', requirePermission('tenant.role.view'), async (req, res) => {
   const ent = await getEntitlements(req.ctx!.tenantId);
@@ -197,6 +229,92 @@ router.get('/permissions', requirePermission('tenant.role.view'), async (req, re
   const data = PERMISSIONS.filter((p) => p.moduleKey === 'tenant' || (p.moduleKey !== 'platform' && ent.modules[p.moduleKey].status !== 'inactive'));
   res.json({ data });
 });
+
+// ── Users & security (Phase 2) ──
+router.get('/tenant/security', requirePermission('tenant.settings.view'), tx(async (req, res) => {
+  res.json(await security.getSecurity(req.ctx!.tenantId, req.ctx!.userId, req.ip));
+}));
+router.put('/tenant/security', requirePermission('tenant.settings.edit'), validate(security.SecurityInput), tx(async (req, res) => {
+  res.json({ policy: await security.updateSecurity(req.ctx!, req.body) });
+}));
+router.get('/tenant/sessions', requirePermission('tenant.member.view'), tx(async (req, res) => {
+  res.json({ data: await security.teamSessions(req.ctx!) });
+}));
+router.delete('/tenant/sessions/:familyId', requirePermission('tenant.member.edit'), validate(z.object({ familyId: z.string().uuid() }), 'params'), tx(async (req, res) => {
+  await security.signOutTeamSession(req.ctx!, String(req.params.familyId));
+  res.status(204).end();
+}));
+router.post('/tenant/sessions/sign-out-others', requirePermission('tenant.member.edit'), tx(async (req, res) => {
+  res.json({ signedOut: await security.signOutEveryoneElse(req.ctx!) });
+}));
+router.get(
+  '/tenant/sign-ins',
+  requirePermission('tenant.audit.view'),
+  validate(z.object({ failed: z.enum(['1', '0']).optional(), days: z.coerce.number().int().min(1).max(90).default(30), format: z.enum(['json', 'csv']).default('json') }), 'query'),
+  tx(async (req, res) => {
+    const q = req.query as unknown as { failed?: string; days: number; format: 'json' | 'csv' };
+    const rows = await security.teamSignIns(req.ctx!.tenantId, { failedOnly: q.failed === '1', days: q.days });
+    if (q.format === 'csv') {
+      await audit({ action: 'tenant.sign_ins.export', entity: 'tenant', entityId: req.ctx!.tenantId, after: { rows: rows.length } });
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="sign-in-history.csv"');
+      res.send(security.signInsCsv(rows));
+      return;
+    }
+    res.json({ data: rows });
+  }),
+);
+router.post(
+  '/members/:id/mfa-reset',
+  requirePermission('tenant.member.edit'),
+  validate(id, 'params'),
+  validate(z.object({ reason: zReason })),
+  tx(async (req, res) => {
+    const m = await db().tenantMember.findUnique({ where: { id: String(req.params.id) } });
+    if (!m) throw notFound('User');
+    await adminResetMfa(req.ctx!.tenantId, req.ctx!.userId, m.userId, req.body.reason);
+    res.json({ reset: true });
+  }),
+);
+
+// ── Notifications (Phase 2) ──
+router.get('/tenant/notifications', requirePermission('tenant.settings.view'), tx(async (req, res) => {
+  res.json(await messages.getNotifications(req.ctx!.tenantId));
+}));
+router.put('/tenant/notifications', requirePermission('tenant.settings.edit'), validate(messages.NotificationsInput), tx(async (req, res) => {
+  res.json({ settings: await messages.updateNotifications(req.ctx!.tenantId, req.body) });
+}));
+router.post(
+  '/tenant/notifications/test',
+  requirePermission('tenant.settings.edit'),
+  validate(z.object({ event: z.enum(['invoice_issued', 'payment_received', 'invoice_overdue', 'appointment_booked', 'appointment_reminder']), subject: z.string().max(150), body: z.string().max(1000) })),
+  tx(async (req, res) => {
+    const me = await withPlatform(() => db().user.findUniqueOrThrow({ where: { id: req.ctx!.userId }, select: { email: true } }));
+    await messages.sendTest(req.ctx!.tenantId, me.email, req.body.event, req.body);
+    res.json({ sentTo: me.email });
+  }),
+);
+
+// ── Data (Phase 2) ──
+router.get('/tenant/imports', requirePermission('tenant.settings.view'), tx(async (_req, res) => {
+  res.json({ data: await data.importHistory() });
+}));
+router.get('/tenant/export', requirePermission('tenant.data.export'), validate(data.ExportQuery, 'query'), tx(async (req, res) => {
+  const file = await data.buildExport(req.ctx!, req.query as unknown as z.infer<typeof data.ExportQuery>);
+  res.setHeader('Content-Type', file.type);
+  res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+  res.send(file.body);
+}));
+router.post('/tenant/close/start', requirePermission('tenant.account.delete'), tx(async (req, res) => {
+  res.json(await data.startClose(req.ctx!));
+}));
+router.post('/tenant/close', requirePermission('tenant.account.delete'), validate(data.CloseInput), tx(async (req, res) => {
+  res.json(await data.closeBusiness(req.ctx!, req.body));
+}));
+router.post('/tenant/reopen', requirePermission('tenant.account.delete'), tx(async (req, res) => {
+  res.json(await data.reopenBusiness(req.ctx!));
+}));
 
 // ── Configuration ──
 router.get('/config/terms', requirePermission('tenant.config.view'), tx(async (req, res) => {

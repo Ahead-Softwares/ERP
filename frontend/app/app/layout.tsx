@@ -26,7 +26,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // LLD §11.1: the template is applied asynchronously right after signup — the loading
   // screen (/app/welcome) shows its real progress. Welcome and setup are full-screen.
   const pathname = usePathname()
-  const fullScreen = pathname.startsWith("/app/welcome") || pathname.startsWith("/app/setup")
+  // A business requires two-step and the grace period is over: nothing else opens until it's set up (A4-D)
+  const mustSetUpMfa = status === "authenticated" && !!me?.security.mustSetUpMfa
+  const onTwoStep = pathname.startsWith("/app/account/two-step")
+  React.useEffect(() => {
+    if (mustSetUpMfa && !onTwoStep) router.replace("/app/account/two-step")
+  }, [mustSetUpMfa, onTwoStep, router])
+  const fullScreen = pathname.startsWith("/app/welcome") || pathname.startsWith("/app/setup") || (mustSetUpMfa && onTwoStep)
   const settingUp = status === "authenticated" && !!me?.tenant && !me.tenant.configApplied && !pathname.startsWith("/app/welcome")
   React.useEffect(() => {
     if (settingUp) router.replace("/app/welcome")
@@ -55,6 +61,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     )
   }
   if (status !== "authenticated" || !me || inConsole) {
+    return (
+      <FullScreen>
+        <Loader2 className="size-5 animate-spin" aria-label="Loading" />
+      </FullScreen>
+    )
+  }
+  if (mustSetUpMfa && !onTwoStep) {
     return (
       <FullScreen>
         <Loader2 className="size-5 animate-spin" aria-label="Loading" />

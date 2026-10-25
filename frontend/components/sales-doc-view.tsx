@@ -118,7 +118,7 @@ export function SalesDocView({ doc, fallbackSeller, className }: { doc: ViewDoc;
 
       <section className="grid gap-6 pt-5 sm:grid-cols-2">
         <div className="grid content-start gap-3">
-          {doc.kind === "invoice" && hsnSummary.length > 0 && (
+          {doc.kind === "invoice" && hsnSummary.length > 0 && seller?.showHsnSummary !== false && (
             <table className="w-full text-xs">
               <thead><tr className="text-neutral-500"><th className="text-left font-medium">HSN/SAC</th><th className="text-right font-medium">Rate</th><th className="text-right font-medium">Taxable</th><th className="text-right font-medium">Tax</th></tr></thead>
               <tbody>{hsnSummary.map((h) => <tr key={`${h.hsn}-${h.rate}`}><td className="font-mono">{h.hsn}</td><td className="text-right">{h.rate / 100}%</td><td className="text-right tabular-nums">{formatPaise(h.taxable)}</td><td className="text-right tabular-nums">{formatPaise(h.tax)}</td></tr>)}</tbody>
@@ -166,6 +166,12 @@ export function SalesDocView({ doc, fallbackSeller, className }: { doc: ViewDoc;
           {doc.notes && <div><p className="font-medium text-neutral-900">Notes</p><p className="whitespace-pre-wrap">{doc.notes}</p></div>}
           {doc.terms && <div><p className="font-medium text-neutral-900">Terms</p><p className="whitespace-pre-wrap">{doc.terms}</p></div>}
         </footer>
+      )}
+      {doc.kind === "invoice" && seller && seller.showSignatory !== false && (
+        <div className="mt-8 ml-auto w-56 text-center text-xs text-neutral-600">
+          <p>For {seller.legalName || seller.name}</p>
+          <div className="mt-10 border-t border-neutral-400 pt-1">Authorised signatory</div>
+        </div>
       )}
       <p className="mt-8 text-center text-[11px] text-neutral-400">This is a computer-generated document.</p>
     </article>

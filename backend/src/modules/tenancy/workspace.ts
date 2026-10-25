@@ -46,6 +46,9 @@ export const ProfileInput = z.object({
   heardFrom: z.string().trim().max(60).nullish(),
   phone: z.union([z.literal('').transform(() => null), z.string().superRefine(fromRule(rules.phone)).transform(rules.storedPhone)]).nullish(),
   email: z.union([z.literal('').transform(() => null), z.string().trim().toLowerCase().superRefine(fromRule(rules.email))]).nullish(),
+  dateFormat: z.enum(['d_mmm_yyyy', 'dd_mm_yyyy', 'yyyy_mm_dd']).optional(),
+  numberFormat: z.enum(['indian', 'international']).optional(),
+  weekStart: z.enum(['monday', 'sunday']).optional(),
 });
 
 /** Signup steps 2–4 (also "Add another business" for a signed-in user). */
@@ -115,8 +118,11 @@ export const PREFERENCE_SCHEMAS = {
     quotationPrefix: Prefix,
     receiptPrefix: Prefix,
     template: z.enum(['classic', 'modern', 'compact']),
-    paper: z.enum(['a4', '80mm']),
+    paper: z.enum(['a4', '80mm', '58mm']),
     terms: z.string().trim().max(2000, 'Keep terms under 2,000 characters'),
+    quotationTerms: z.string().trim().max(2000, 'Keep terms under 2,000 characters'),
+    showHsnSummary: z.boolean(),
+    showSignatory: z.boolean(),
   }),
   payments: z
     .object({
@@ -182,19 +188,24 @@ export async function updateProfile(tenantId: string, patch: z.infer<typeof Prof
   return profile;
 }
 
-/** Replace one preferences section. Bank numbers are masked in the audit log. */
+/**
+ * Update one preferences section (fields not sent keep their value). Other keys stored in
+ * preferences (security, notifications) are kept. Bank numbers are masked in the audit log.
+ */
 export async function updatePreferences<S extends PreferenceSection>(tenantId: string, section: S, input: unknown) {
-  const parsed = PREFERENCE_SCHEMAS[section].safeParse(input);
+  const current = await getTenant(tenantId);
+  const merged = { ...withDefaults(current.preferences)[section], ...((input && typeof input === 'object' ? input : {}) as object) };
+  const parsed = PREFERENCE_SCHEMAS[section].safeParse(merged);
   if (!parsed.success) {
     const fields: Record<string, string> = {};
     for (const issue of parsed.error.issues) fields[issue.path.join('.') || '_'] = issue.message;
     throw new AppError('VALIDATION_FAILED', 'Some fields are invalid.', { fields });
   }
-  const t = await getTenant(tenantId);
-  const prefs = withDefaults(t.preferences);
+  const prefs = withDefaults(current.preferences);
   const before = prefs[section];
   const next = { ...prefs, [section]: parsed.data } as WorkspacePreferences;
-  await db().tenant.update({ where: { id: tenantId }, data: { preferences: next as unknown as Prisma.InputJsonValue } });
+  const stored = { ...((current.preferences ?? {}) as object), [section]: parsed.data };
+  await db().tenant.update({ where: { id: tenantId }, data: { preferences: stored as Prisma.InputJsonValue } });
   const mask = (v: unknown) => (section === 'payments' ? { ...(v as object), bankAccount: String((v as { bankAccount?: string }).bankAccount ?? '').replace(/.(?=.{4})/g, '•') } : v);
   await audit({ action: `tenant.preferences.${section}`, entity: 'tenant', entityId: tenantId, before: mask(before), after: mask(parsed.data) });
   return next;
@@ -217,6 +228,69 @@ export async function setInvoiceStart(tenantId: string, n: number) {
   await db().$executeRaw`INSERT INTO tenant_sequences (tenant_id, doc_type, fy, prefix, next_no) VALUES (${tenantId}::uuid, 'invoice', ${fy}, ${prefix}, ${n})
     ON CONFLICT (tenant_id, doc_type, fy) DO UPDATE SET next_no = ${n}, prefix = ${prefix}`;
   await audit({ action: 'tenant.sequence.start', entity: 'tenant', entityId: tenantId, after: { docType: 'invoice', fy, startAt: n } });
+}
+
+const SERIES = [
+  { docType: 'invoice', label: 'Tax invoice', prefixKey: 'invoicePrefix' },
+  { docType: 'quotation', label: 'Quotation', prefixKey: 'quotationPrefix' },
+  { docType: 'receipt', label: 'Receipt', prefixKey: 'receiptPrefix' },
+] as const;
+export type SeriesType = (typeof SERIES)[number]['docType'];
+
+/** The last number actually given to a document in this series and year (not just next − 1). */
+async function lastIssued(docType: SeriesType, fy: string, usedPrefix: string) {
+  if (docType === 'receipt') {
+    const p = await db().payment.findFirst({ where: { number: { startsWith: usedPrefix } }, orderBy: { createdAt: 'desc' }, select: { number: true } });
+    return p?.number ?? null;
+  }
+  const d = await db().salesDocument.findFirst({
+    where: { kind: docType, fy, number: { not: null } },
+    orderBy: docType === 'invoice' ? { issuedAt: 'desc' } : { createdAt: 'desc' },
+    select: { number: true },
+  });
+  return d?.number ?? null;
+}
+const counterOf = (number: string | null) => (number ? Number(/(\d+)$/.exec(number)?.[1] ?? 0) : 0);
+
+/** Settings › Documents: each series this financial year — prefix, next number, last issued. */
+export async function listSequences(tenantId: string) {
+  const t = await getTenant(tenantId);
+  const fy = financialYear(new Date(), t.fyStartMonth);
+  const prefs = withDefaults(t.preferences);
+  const rows = await db().$queryRaw<{ doc_type: string; prefix: string; next_no: number }[]>`SELECT doc_type, prefix, next_no FROM tenant_sequences WHERE tenant_id = ${tenantId}::uuid AND fy = ${fy}`;
+  const data = [];
+  for (const s of SERIES) {
+    const row = rows.find((r) => r.doc_type === s.docType);
+    const used = row?.prefix ?? prefs.documents[s.prefixKey].replace(/\{FY\}/g, fy);
+    const last = await lastIssued(s.docType, fy, used);
+    data.push({ docType: s.docType, label: s.label, prefix: prefs.documents[s.prefixKey], nextNo: row?.next_no ?? 1, lastIssued: last, minNext: counterOf(last) + 1 });
+  }
+  return { fy, data };
+}
+
+/** Raise the next number of a series (moving from another tool). Never below the last issued. */
+export async function setNextNumber(tenantId: string, docType: SeriesType, nextNo: number) {
+  const t = await getTenant(tenantId);
+  const fy = financialYear(new Date(), t.fyStartMonth);
+  const s = SERIES.find((x) => x.docType === docType)!;
+  const prefix = withDefaults(t.preferences).documents[s.prefixKey].replace(/\{FY\}/g, fy);
+  const rows = await db().$queryRaw<{ next_no: number; prefix: string }[]>`SELECT next_no, prefix FROM tenant_sequences WHERE tenant_id = ${tenantId}::uuid AND doc_type = ${docType} AND fy = ${fy} FOR UPDATE`;
+  const current = rows[0]?.next_no ?? 1;
+  // Raise freely; lower only down to just after the last number really issued (never reuse one)
+  const last = await lastIssued(docType, fy, rows[0]?.prefix ?? prefix);
+  const floor = counterOf(last) + 1;
+  if (nextNo < floor) {
+    const message = `Next number can't be lower than ${String(floor).padStart(4, '0')} — ${last} is already issued.`;
+    throw new AppError('VALIDATION_FAILED', message, { fields: { nextNo: message } });
+  }
+  if (`${prefix}${String(nextNo).padStart(4, '0')}`.length > 16) {
+    const message = 'Prefix plus number must stay within 16 characters (GST rule)';
+    throw new AppError('VALIDATION_FAILED', message, { fields: { nextNo: message } });
+  }
+  await db().$executeRaw`INSERT INTO tenant_sequences (tenant_id, doc_type, fy, prefix, next_no) VALUES (${tenantId}::uuid, ${docType}, ${fy}, ${prefix}, ${nextNo})
+    ON CONFLICT (tenant_id, doc_type, fy) DO UPDATE SET next_no = ${nextNo}, prefix = ${prefix}`;
+  await audit({ action: 'tenant.sequence.next', entity: 'tenant', entityId: tenantId, before: { docType, fy, nextNo: current }, after: { docType, fy, nextNo } });
+  return listSequences(tenantId);
 }
 
 // ── Setup wizard ──

@@ -41,7 +41,7 @@ export function BrandingStep({ workspace, tenant, refresh, complete, back }: Ste
       <StepHeader title="Make it yours" description="Choose the look for your team. The preview updates as you click." />
       <div className="grid gap-8 xl:grid-cols-[22rem_1fr]">
         <div className="grid content-start gap-6">
-          <section className="grid gap-2">
+          <section id="colour" className="grid gap-2">
             <h2 className="text-sm font-semibold">Brand colour</h2>
             <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Brand colour">
               {BRAND_COLORS.map((c) => (
@@ -75,7 +75,7 @@ export function BrandingStep({ workspace, tenant, refresh, complete, back }: Ste
               />
             </Field>
           </section>
-          <section className="grid gap-2">
+          <section id="look" className="grid gap-2">
             <h2 className="text-sm font-semibold">Default theme for the team</h2>
             <div className="flex gap-2" role="radiogroup" aria-label="Theme">
               {(["light", "dark", "system"] as const).map((t) => (

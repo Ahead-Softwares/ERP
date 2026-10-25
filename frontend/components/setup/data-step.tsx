@@ -21,7 +21,8 @@ const MAX_BYTES = 5 * 1024 * 1024
 const MAX_ROWS = 1000
 const GST_RATES = [0, 0.25, 3, 5, 12, 18, 28]
 
-type Kind = "customers" | "items"
+export type ImportKind = "customers" | "items"
+type Kind = ImportKind
 interface Target {
   key: string
   label: string
@@ -75,12 +76,13 @@ const autoMap = (kind: Kind, header: string[]) =>
     return TARGETS[kind].find((t) => t.aliases.includes(k) || t.label.toLowerCase() === k)?.key ?? ""
   })
 
-export function DataStep({ complete, back }: StepProps) {
+/** The setup step; with importKind it is just the import flow (Settings › Data). */
+export function DataStep({ complete, back, importKind, onImported }: StepProps & { importKind?: ImportKind; onImported?: () => void }) {
   const { term, can } = useAuth()
   const customers = term("entity.contact.plural", "Customers")
   const itemsLabel = term("entity.item.plural", "Products & services")
   const [mode, setMode] = React.useState<"import" | "sample" | "fresh">("import")
-  const [kind, setKind] = React.useState<Kind>("customers")
+  const [kind, setKind] = React.useState<Kind>(importKind ?? "customers")
   const [stage, setStage] = React.useState(0)
   const [file, setFile] = React.useState<Parsed | null>(null)
   const [mapping, setMapping] = React.useState<string[]>([])
@@ -146,6 +148,7 @@ export function DataStep({ complete, back }: StepProps) {
           ? await api.post<ImportResult>("/contacts/import", { type: "customer", rows, onDuplicate })
           : await api.post<ImportResult>("/items/import", { rows, onDuplicate })
       setResult({ ...r, updated: r.updated ?? 0 })
+      onImported?.()
       setStage(3)
     })
 
@@ -169,6 +172,7 @@ export function DataStep({ complete, back }: StepProps) {
       }}
     >
       <StepHeader title="Bring your data" description="Start with what you already have, or explore with sample data first." />
+      {!importKind && (
       <div className="grid gap-2.5 sm:grid-cols-3" role="radiogroup" aria-label="How to start">
         <ChoiceChip selected={mode === "import"} onClick={() => setMode("import")} className="grid gap-0.5 rounded-[10px] px-3.5 py-3">
           <span className="text-sm font-bold">Import a file</span>
@@ -183,6 +187,7 @@ export function DataStep({ complete, back }: StepProps) {
           <span className="text-xs font-normal text-muted-foreground">Add records as you go</span>
         </ChoiceChip>
       </div>
+      )}
 
       {mode === "import" && (
         <div className="grid min-h-0 gap-3 rounded-xl border p-4">
@@ -388,7 +393,7 @@ export function DataStep({ complete, back }: StepProps) {
 
       {mode === "fresh" && <div className="rounded-xl border p-5 text-sm text-muted-foreground">Nothing to import now — add {customers.toLowerCase()} and {itemsLabel.toLowerCase()} as you go.</div>}
 
-      <StepFooter back={back} onSkip={() => void complete("skipped")} saving={saving} error={error} saveLabel="Continue" note="Checked against your plan's limits · people already in AHEAD are matched by mobile or email" />
+      {!importKind && <StepFooter back={back} onSkip={() => void complete("skipped")} saving={saving} error={error} saveLabel="Continue" note="Checked against your plan's limits · people already in AHEAD are matched by mobile or email" />}
     </form>
   )
 }

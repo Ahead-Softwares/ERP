@@ -1,4 +1,8 @@
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
+import { describePasswordPolicy } from '../../contracts/account';
+import { applyNewPassword, checkSecondFactor, isTrustedDevice, passwordExpired, trustDevice } from '../account/service';
+import { personalPolicy } from '../account/policy';
+import { logSignIn } from '../account/signin';
 import { z } from 'zod';
 import { db, withPlatform } from '../../kernel/db';
 import { AppError } from '../../kernel/errors';
@@ -14,7 +18,7 @@ import { consumeOtp, sendOtp } from './otp';
 import { zEmail, zMobileIN, zPassword, zPersonName } from '../../kernel/zodRules';
 import { BusinessSignup, signupToTenant } from '../tenancy/workspace';
 import { REFRESH_COOKIE, clearRefreshCookie, rotateSession, signAccessToken, signPurposeToken, startSession, verifyPurposeToken } from './tokens';
-import { buildMe, checkPassword, completeLogin, sendEmailVerification, setPassword } from './service';
+import { buildMe, checkPassword, completeLogin, sendEmailVerification } from './service';
 
 const router = Router();
 
@@ -128,23 +132,100 @@ const LoginBody = z.union([
   z.object({ mobile: Mobile, otp: z.string().regex(/^\d{6}$/) }),
 ]);
 
+/**
+ * After the password or mobile OTP: a password past the business's expiry must be changed
+ * first, then the app code is asked unless this device is trusted. Each step hands the
+ * browser a short-lived token for the next one.
+ */
+async function afterFirstFactor(req: Request, res: Response, userId: string, method: string) {
+  const user = await db().user.findUniqueOrThrow({ where: { id: userId } });
+  if (method === 'password') {
+    const policy = await personalPolicy(userId);
+    if (await passwordExpired(user, policy.password.expiryDays)) {
+      await logSignIn(req, { userId, identifier: user.email, outcome: 'expired_password', method });
+      return {
+        passwordExpired: true,
+        changeToken: signPurposeToken('password_expired', { sub: userId, method }, 10 * 60),
+        policy: policy.password,
+        policyText: describePasswordPolicy(policy.password),
+      };
+    }
+  }
+  if (user.mfaEnabled && !(await isTrustedDevice(req, userId))) {
+    await logSignIn(req, { userId, identifier: user.email, outcome: 'mfa_challenge', method });
+    return { mfaRequired: true, mfaToken: signPurposeToken('mfa_login', { sub: userId, method }, 5 * 60), email: user.email };
+  }
+  return completeLogin(req, res, userId, method);
+}
+
 router.post('/login', publicRoute, loginLimiter, validate(LoginBody), async (req, res) => {
   const body = req.body as z.infer<typeof LoginBody>;
   const out = await withPlatform(async () => {
     let userId: string;
     if ('password' in body) {
       const id = body.identifier.includes('@') ? { email: normaliseEmail(body.identifier) } : { mobile: normaliseMobile(body.identifier) };
-      userId = (await checkPassword(id, body.password)).id;
+      userId = (await checkPassword(id, body.password, req)).id;
     } else {
       const user = await db().user.findUnique({ where: { mobile: body.mobile } });
       if (!user) throw new AppError('INVALID_CREDENTIALS', 'Incorrect mobile number or code.');
       await consumeOtp(body.mobile, 'login', body.otp);
       userId = user.id;
     }
-    return completeLogin(req, res, userId, 'password' in body ? 'password' : 'otp');
+    return afterFirstFactor(req, res, userId, 'password' in body ? 'password' : 'otp');
   });
   res.json(out);
 });
+
+// Second step: the authenticator code or a backup code
+router.post(
+  '/mfa/verify',
+  publicRoute,
+  loginLimiter,
+  validate(
+    z
+      .object({
+        mfaToken: z.string().min(10),
+        code: z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code').optional(),
+        backupCode: z.string().trim().regex(/^[A-Za-z0-9]{4}-?[A-Za-z0-9]{4}$/, 'Backup codes look like 7KQ2-9MZD').optional(),
+        trustDevice: z.boolean().default(false),
+      })
+      .refine((b) => b.code || b.backupCode, { message: 'Enter the 6-digit code', path: ['code'] }),
+  ),
+  async (req, res) => {
+    const p = verifyPurposeToken<{ sub: string; method: string }>('mfa_login', req.body.mfaToken);
+    const out = await withPlatform(async () => {
+      let left: number;
+      try {
+        left = (await checkSecondFactor(p.sub, { code: req.body.code, backupCode: req.body.backupCode })).backupCodesLeft;
+      } catch (e) {
+        const locked = e instanceof AppError && e.code === 'ACCOUNT_LOCKED';
+        await logSignIn(req, { userId: p.sub, outcome: locked ? 'mfa_locked' : 'mfa_failed', method: req.body.backupCode ? 'backup_code' : 'app' });
+        throw e;
+      }
+      if (req.body.trustDevice) await trustDevice(req, res, p.sub);
+      const login = await completeLogin(req, res, p.sub, `${p.method}+${req.body.backupCode ? 'backup_code' : 'app'}`);
+      return { ...login, backupCodesLeft: req.body.backupCode ? left : undefined };
+    });
+    res.json(out);
+  },
+);
+
+// Password past the business's expiry: set a new one, then carry on signing in
+router.post(
+  '/password/expired',
+  publicRoute,
+  loginLimiter,
+  validate(z.object({ changeToken: z.string().min(10), password: z.string().min(1, 'Enter a new password').max(64) })),
+  async (req, res) => {
+    const p = verifyPurposeToken<{ sub: string; method: string }>('password_expired', req.body.changeToken);
+    const out = await withPlatform(async () => {
+      await applyNewPassword(p.sub, req.body.password);
+      await audit({ tenantId: null, actorId: p.sub, action: 'auth.password_expired_change', ip: req.ip });
+      return afterFirstFactor(req, res, p.sub, `${p.method}+renewed`);
+    });
+    res.json(out);
+  },
+);
 
 router.post('/refresh', publicRoute, async (req, res) => {
   const refresh = req.cookies?.[REFRESH_COOKIE];
@@ -231,7 +312,7 @@ router.post(
       const user = await db().user.findFirst({ where: target.includes('@') ? { email: target } : { mobile: target } });
       if (!user) throw new AppError('OTP_INVALID', 'The code is incorrect.');
       await consumeOtp(target, 'reset', code);
-      await setPassword(user.id, password);
+      await applyNewPassword(user.id, password);
       await db().userSession.updateMany({ where: { userId: user.id, revokedAt: null }, data: { revokedAt: new Date() } });
       await audit({ tenantId: null, actorId: user.id, action: 'auth.password_reset' });
     });

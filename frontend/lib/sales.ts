@@ -40,6 +40,10 @@ export interface Seller {
   bank?: { holder: string; account: string; ifsc: string } | null
   upiId?: string | null
   showUpiQr?: boolean
+  /** Frozen at issue from Settings › Documents › Print */
+  showHsnSummary?: boolean
+  showSignatory?: boolean
+  paper?: "a4" | "80mm" | "58mm"
 }
 
 export interface SalesDoc {

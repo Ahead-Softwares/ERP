@@ -148,7 +148,7 @@ export function DocumentsStep({ tenant, workspace, refresh, complete, back }: St
   )
 }
 
-function InvoicePreview({
+export function InvoicePreview({
   prefs,
   number,
   tenant,

@@ -38,6 +38,9 @@ enum OtpPurpose {
   vendor_signup
   mfa
   invite
+  email_change
+  mobile_change
+  close_account
 
   @@map("otp_purpose")
 }
@@ -228,10 +231,16 @@ model User {
   lockedUntil      DateTime?  @map("locked_until") @db.Timestamptz
   lastTenantId     String?    @map("last_tenant_id") @db.Uuid
   lastLoginAt      DateTime?  @map("last_login_at") @db.Timestamptz
+  /// Personal theme, font, density, start page, date format (contracts/account.ts)
+  preferences      Json       @default("{}")
+  passwordChangedAt DateTime? @map("password_changed_at") @db.Timestamptz
   createdAt        DateTime   @default(now()) @map("created_at") @db.Timestamptz
   updatedAt        DateTime   @updatedAt @map("updated_at") @db.Timestamptz
 
   sessions       UserSession[]
+  mfa            UserMfa?
+  trustedDevices UserTrustedDevice[]
+  passwordHistory UserPasswordHistory[]
   memberships    TenantMember[]
   platformMember PlatformMember?
 
@@ -1343,4 +1352,65 @@ model Appointment {
   @@index([tenantId, startAt])
   @@index([tenantId, staffId, startAt])
   @@map("appointments")
+}
+
+// ── Phase 2: account security (platform tables) ──
+
+model UserMfa {
+  userId         String    @id @map("user_id") @db.Uuid
+  secretEnc      String    @map("secret_enc")
+  enabledAt      DateTime? @map("enabled_at") @db.Timestamptz
+  /// [{ hash, usedAt }] — one-time recovery codes
+  backupCodes    Json      @default("[]") @map("backup_codes")
+  failedAttempts Int       @default(0) @map("failed_attempts")
+  lockedUntil    DateTime? @map("locked_until") @db.Timestamptz
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_mfa")
+}
+
+model UserTrustedDevice {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  tokenHash String   @unique @map("token_hash")
+  userAgent String?  @map("user_agent")
+  expiresAt DateTime @map("expires_at") @db.Timestamptz
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("user_trusted_devices")
+}
+
+model UserPasswordHistory {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("user_password_history")
+}
+
+model SignInEvent {
+  id         String   @id @default(uuid(7)) @db.Uuid
+  userId     String?  @map("user_id") @db.Uuid
+  tenantId   String?  @map("tenant_id") @db.Uuid
+  /// Masked email/mobile when no account matched
+  identifier String?
+  /// success | wrong_password | locked | mfa_challenge | mfa_failed | blocked_ip | expired_password
+  outcome    String
+  method     String?
+  ip         String?
+  userAgent  String?  @map("user_agent")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([userId, createdAt])
+  @@index([createdAt])
+  @@map("sign_in_events")
 }

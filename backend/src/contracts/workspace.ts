@@ -77,6 +77,10 @@ export interface WorkspaceProfile {
   /** Phone and email printed on documents (default: the owner's) */
   phone?: string | null;
   email?: string | null;
+  /** Business-wide formats (Settings › Organization); a person can pick their own date format */
+  dateFormat?: 'd_mmm_yyyy' | 'dd_mm_yyyy' | 'yyyy_mm_dd';
+  numberFormat?: 'indian' | 'international';
+  weekStart?: 'monday' | 'sunday';
 }
 
 export const DOC_TEMPLATES = [
@@ -129,8 +133,13 @@ export interface WorkspacePreferences {
     quotationPrefix: string;
     receiptPrefix: string;
     template: DocTemplate;
-    paper: 'a4' | '80mm';
+    paper: 'a4' | '80mm' | '58mm';
+    /** Printed on invoices */
     terms: string;
+    /** Printed on quotations */
+    quotationTerms: string;
+    showHsnSummary: boolean;
+    showSignatory: boolean;
   };
   payments: {
     bankHolder: string;
@@ -156,7 +165,7 @@ export interface WorkspacePreferences {
 }
 
 export const DEFAULT_PREFERENCES: WorkspacePreferences = {
-  documents: { invoicePrefix: 'INV/{FY}/', quotationPrefix: 'QT/{FY}/', receiptPrefix: 'RCT/{FY}/', template: 'classic', paper: 'a4', terms: '' },
+  documents: { invoicePrefix: 'INV/{FY}/', quotationPrefix: 'QT/{FY}/', receiptPrefix: 'RCT/{FY}/', template: 'classic', paper: 'a4', terms: '', quotationTerms: '', showHsnSummary: true, showSignatory: true },
   payments: { bankHolder: '', bankAccount: '', ifsc: '', upiId: '', showUpiQr: false },
   taxes: { composition: false, compositionRateBp: null, pricesIncludeTax: true, defaultGstRateBp: 1800, hsnDigits: 4, reverseCharge: false },
   branding: { brandColor: '#2450D8', theme: 'system', font: 'inter', density: 'comfortable' },

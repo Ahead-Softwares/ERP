@@ -29,6 +29,9 @@ export const setAccessToken = (token: string | null) => {
   accessToken = token
 }
 
+/** Authorization header for raw fetches (file downloads) */
+export const authHeader = (): Record<string, string> => (accessToken ? { authorization: `Bearer ${accessToken}` } : {})
+
 export async function refreshAccessToken(): Promise<string | null> {
   refreshing ??= fetch("/api/v1/auth/refresh", { method: "POST", credentials: "include" })
     .then(async (res) => {
