@@ -7,6 +7,14 @@ import { dateOnly, todayIST } from '../../kernel/gst';
 import { requirePermission, tenantAuth, tx } from '../../middleware/auth';
 import { getRolePermissions } from '../access/service';
 import { getEntitlements } from '../subscription/entitlements';
+import { z } from 'zod';
+import type { Prisma } from '@prisma/client';
+import { prisma } from '../../kernel/db';
+import { AppError } from '../../kernel/errors';
+import { validate } from '../../middleware/request';
+import { DASHBOARD_TABS, DASHBOARD_WIDGETS, dashboardWithDefaults, daysBetween, type DashboardTab } from '../../contracts/dashboard';
+import { TAB_HANDLERS, availableTabs, dashboardConfig, scoper } from './dashboard';
+import { search } from './search';
 
 // Home dashboard (RPT-01): one call, widgets only for modules the role can see,
 // every figure filtered by that module's data scope. Totals are computed here, never in the UI.
@@ -126,6 +134,72 @@ router.get('/dashboard/summary', requirePermission('reports.dashboard.view'), tx
   }
 
   res.json(out);
+}));
+
+// ── Dashboard v2 (Phase 3) ──
+
+const TAB_KEYS = DASHBOARD_TABS.map((t) => t.key) as [DashboardTab, ...DashboardTab[]];
+const Day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD');
+
+async function readDashboardPrefs(userId: string, tenantId: string) {
+  const u = await prisma.user.findUnique({ where: { id: userId }, select: { preferences: true } });
+  const all = ((u?.preferences ?? {}) as { dashboard?: Record<string, unknown> }).dashboard ?? {};
+  return dashboardWithDefaults(all[tenantId]);
+}
+
+// Tabs are checked one by one (a stylist with no dashboard permission still gets My day)
+router.get('/dashboard/config', tx(async (req, res) => {
+  const ctx = req.ctx!;
+  const { scoped, readOnly } = await scoper(ctx);
+  const role = await db().role.findUniqueOrThrow({ where: { id: ctx.roleId }, select: { key: true, roleType: true } });
+  const [config, prefs] = await Promise.all([dashboardConfig(ctx, scoped, readOnly, role), readDashboardPrefs(ctx.userId, ctx.tenantId)]);
+  res.json({ ...config, prefs, widgets: DASHBOARD_WIDGETS, today: todayIST() });
+}));
+
+router.get(
+  '/dashboard/tab/:tab',
+  validate(z.object({ tab: z.enum(TAB_KEYS) }), 'params'),
+  validate(z.object({ from: Day, to: Day, compare: z.enum(['0', '1']).default('1'), branchId: z.string().uuid().optional() }), 'query'),
+  // No request transaction: each widget opens its own so they run side by side
+  async (req, res) => {
+    const ctx = req.ctx!;
+    const tab = req.params.tab as DashboardTab;
+    const q = req.query as unknown as { from: string; to: string; compare: '0' | '1'; branchId?: string };
+    if (q.from > q.to) throw new AppError('VALIDATION_FAILED', 'The start date is after the end date.', { fields: { from: 'Start is after the end' } });
+    if (daysBetween(q.from, q.to) > 731) throw new AppError('VALIDATION_FAILED', 'Choose up to 2 years.', { fields: { from: 'Choose up to 2 years' } });
+    if (q.branchId && ctx.branchIds.length && !ctx.branchIds.includes(q.branchId)) throw new AppError('PERMISSION_DENIED', "You don't work in this branch.");
+    const { scoped, readOnly } = await scoper(ctx);
+    if (!availableTabs(scoped, readOnly).some((t) => t.key === tab)) throw new AppError('PERMISSION_DENIED', 'This dashboard tab is not available to your role.');
+    const data = await TAB_HANDLERS[tab](ctx, scoped, { range: { from: q.from, to: q.to }, compare: q.compare === '1', branchId: q.branchId ?? null });
+    res.json({ tab, range: { from: q.from, to: q.to }, data });
+  },
+);
+
+const Layout = z.object({ order: z.array(z.string().max(30)).max(20), hidden: z.array(z.string().max(30)).max(20) });
+const PrefsPatch = z.object({
+  lastTab: z.enum(TAB_KEYS).nullable().optional(),
+  range: z.enum(['today', 'week', 'month', 'custom']).optional(),
+  from: Day.nullable().optional(),
+  to: Day.nullable().optional(),
+  compare: z.boolean().optional(),
+  branchId: z.string().uuid().nullable().optional(),
+  layouts: z.record(z.enum(TAB_KEYS), Layout).optional(),
+  hiddenTabs: z.array(z.enum(TAB_KEYS).refine((t) => t !== 'overview', "The Overview tab can't be hidden")).max(8).optional(),
+});
+
+// Saved per person and per business, in the person's preferences
+router.put('/dashboard/preferences', validate(PrefsPatch), async (req, res) => {
+  const ctx = req.ctx!;
+  const u = await prisma.user.findUniqueOrThrow({ where: { id: ctx.userId }, select: { preferences: true } });
+  const prefs = (u.preferences ?? {}) as Record<string, unknown> & { dashboard?: Record<string, unknown> };
+  const mine = { ...dashboardWithDefaults(prefs.dashboard?.[ctx.tenantId]), ...req.body };
+  await prisma.user.update({ where: { id: ctx.userId }, data: { preferences: { ...prefs, dashboard: { ...(prefs.dashboard ?? {}), [ctx.tenantId]: mine } } as Prisma.InputJsonValue } });
+  res.json({ prefs: mine });
+});
+
+// ── Ctrl+K search ──
+router.get('/search', validate(z.object({ q: z.string().trim().min(2, 'Type at least 2 characters').max(60) }), 'query'), tx(async (req, res) => {
+  res.json(await search(req.ctx!, String((req.query as { q: string }).q)));
 }));
 
 export default router;

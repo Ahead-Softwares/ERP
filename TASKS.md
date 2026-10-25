@@ -267,11 +267,13 @@ Not built yet / differs from the wireframes: photo upload and signature image (n
   - Integrations: API keys, webhooks (later)
 - [x] My account (every user): profile + photo (photo needs file storage), change password, MFA (authenticator app + backup codes; SMS-code fallback not built — needs an SMS provider), personal theme/font/density, notification preferences, devices and sessions
 
-### Phase 3 — Dashboard v2 with module tabs
-- [ ] Tabs: **Overview** + one tab per module the user can see (Sales, Billing, CRM, Bookings, Inventory, Finance, HR, Tasks, Support, Reports); a tab shows only when the module is entitled and the role has its dashboard permission; read-only modules show their tab with an upgrade note; last opened tab remembered per user
-- [ ] One date-range filter shared by all tabs, with comparison to the previous period; branch filter for multi-branch tenants
-- [ ] Overview: today's money (sales, collections, dues), approvals/to-do inbox, today's appointments/tasks, recent activity, quick "+ New"
-- [ ] Module tabs (each loads its own widgets lazily):
+### Phase 3 — Dashboard v2 with module tabs (built 2026-10-25, matched to wireframes 5.1–5.8)
+Built: `contracts/dashboard.ts` (tabs, widgets per tab, ranges, comparison period, chart buckets, GSTR-3B date, per-person layout), `modules/reports/dashboard.ts` (one handler per tab; every figure follows the module's data scope and the branch filter; each widget runs in its own tenant transaction so they load side by side and a failing one returns an error without blocking the rest), routes `GET /dashboard/config`, `GET /dashboard/tab/:tab`, `PUT /dashboard/preferences` (saved per person and business in `users.preferences.dashboard`), `GET /search` (Ctrl+K), `POST /invoices/remind` (Invoice overdue template, daily cap, scope). Web: `components/dashboard/*` (header with range / compare / branch / + New, tabs, Customize with reorder, hide, widgets from other tabs, hide a tab, reset), `components/command-palette.tsx`. Tests: `dashboard.test.ts` (9); browser pass on every tab with seeded data, the staff view and phone width.
+Not built / differs: Inventory, HR and Support tabs (modules not built); approvals in "Needs you" (no approval requests exist yet); gaps in today's schedule; staff working hours (9 h a day until schedules exist); bank balances, GST input credit and a full P&L (need Bank and Purchases); dues by age counts from the invoice date. Tab load is about 2–4 s here because each transaction makes several round trips to the database in us-east-2.
+- [x] Tabs: **Overview** + one tab per module the user can see (Sales, Billing, CRM, Bookings, Inventory, Finance, HR, Tasks, Support, Reports); a tab shows only when the module is entitled and the role has its dashboard permission; read-only modules show their tab with an upgrade note; last opened tab remembered per user
+- [x] One date-range filter shared by all tabs, with comparison to the previous period; branch filter for multi-branch tenants
+- [x] Overview: today's money (sales, collections, dues), approvals/to-do inbox, today's appointments/tasks, recent activity, quick "+ New"
+- [x] Module tabs (each loads its own widgets lazily):
   - Sales: quotations sent / won, conversion, top customers, pending orders
   - Billing: invoiced vs collected, dues ageing, overdue list, payment modes split
   - CRM: new leads, lead sources, pipeline by stage, follow-ups due, conversion
@@ -281,8 +283,8 @@ Not built yet / differs from the wireframes: photo upload and signature image (n
   - HR: headcount, today's attendance, on leave, payroll due, birthdays
   - Tasks: open/overdue by person, completed this week
   - Support: open tickets, SLA breaches, average resolution time
-- [ ] Role-aware defaults (Owner sees money first, staff see their own work); widgets can be hidden/reordered per user
-- [ ] Global search / Ctrl+K command palette (records, pages, actions)
+- [x] Role-aware defaults (Owner sees money first, staff see their own work); widgets can be hidden/reordered per user
+- [x] Global search / Ctrl+K command palette (records, pages, actions)
 
 ### Phase 4 — Console revamp
 - [ ] View-first everywhere (Phase 0 pattern); maker-checker approval for plan, price, coupon and settings changes; setting history with restore

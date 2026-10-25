@@ -86,9 +86,12 @@ export async function updatePreferences(userId: string, prefs: PersonalPreferenc
     const m = await db().tenantMember.findUnique({ where: { tenantId_userId: { tenantId: defaultTenantId, userId } } });
     if (!m || m.status !== 'active') throw new AppError('VALIDATION_FAILED', 'Choose one of your businesses.', { fields: { defaultTenantId: 'Choose one of your businesses' } });
   }
+  // Keep what other screens store here (the dashboard layout per business)
+  const current = await db().user.findUniqueOrThrow({ where: { id: userId }, select: { preferences: true } });
+  const stored = { ...((current.preferences ?? {}) as Record<string, unknown>), ...prefs };
   await db().user.update({
     where: { id: userId },
-    data: { preferences: prefs as unknown as Prisma.InputJsonValue, ...(defaultTenantId ? { lastTenantId: defaultTenantId } : {}) },
+    data: { preferences: stored as unknown as Prisma.InputJsonValue, ...(defaultTenantId ? { lastTenantId: defaultTenantId } : {}) },
   });
   return prefs;
 }

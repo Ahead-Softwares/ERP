@@ -21,6 +21,7 @@ import { api, errorMessage } from "@/lib/api"
 import { useAuth } from "@/lib/auth"
 import { DASHBOARD_NAV, MODULE_NAV } from "@/lib/nav"
 import { ReadOnlyBanner } from "@/components/page-states"
+import { CommandPalette } from "@/components/command-palette"
 import type { ModuleKey } from "@/lib/types"
 import { formatDateTime, initials } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -349,6 +350,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMobileOpen(true)} aria-label="Open navigation">
               <Menu className="size-4" />
             </Button>
+            <CommandPalette />
             <div className="flex-1" />
             <Notifications />
             <UserMenu />

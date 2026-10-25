@@ -11,6 +11,7 @@ import { publicLimiter } from '../../middleware/rateLimit';
 import { audit } from '../audit/service';
 import { todayIST } from '../../kernel/gst';
 import * as billing from './service';
+import { sendOverdueReminders } from '../tenancy/messages';
 
 // Quotations (sales module) and GST invoices + receipts (billing module).
 
@@ -151,6 +152,12 @@ router.post(
   }),
 );
 
+// Overdue reminders from the dashboard and the dues list (Invoice overdue template)
+router.post('/invoices/remind', requirePermission('billing.invoice.edit'), validate(z.object({ ids: z.array(z.string().uuid()).min(1, 'Choose at least one invoice').max(100) })), tx(async (req, res) => {
+  // Only invoices inside the person's scope
+  const allowed = await db().salesDocument.findMany({ where: { AND: [{ id: { in: req.body.ids } }, scopeWhere(req.ctx!, { owner: ['createdBy'], branch: 'branchId' })] }, select: { id: true } });
+  res.json(await sendOverdueReminders(req.ctx!.tenantId, allowed.map((d) => d.id)));
+}));
 router.post('/invoices/:id/payments', requirePermission('billing.payment.create'), validate(IdParam, 'params'), validate(billing.PaymentInput), tx(async (req, res) => {
   res.status(201).json(await billing.recordPayment(req.ctx!, String(req.params.id), req.body));
 }));

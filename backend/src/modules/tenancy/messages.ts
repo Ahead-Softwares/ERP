@@ -88,6 +88,44 @@ async function deliver(tenantId: string, event: CustomerEvent, documentId: strin
   await db().notificationLog.create({ data: { tenantId, template: `customer.${event}`, channel: 'email', target: buyer.email } });
 }
 
+/**
+ * "Remind" on the dashboard and the dues list: the Invoice overdue message, sent now whether
+ * or not the automatic overdue reminders are on. Skips customers without an email and those
+ * who already got today's maximum.
+ */
+export async function sendOverdueReminders(tenantId: string, ids: string[]) {
+  const t = await db().tenant.findUniqueOrThrow({ where: { id: tenantId }, select: { name: true, preferences: true } });
+  const settings = notificationsWithDefaults(raw(t.preferences).notifications);
+  const tpl = settings.customer.invoice_overdue;
+  const docs = await db().salesDocument.findMany({ where: { id: { in: ids }, kind: 'invoice', status: { in: ['issued', 'partially_paid'] } } });
+  const since = new Date(Date.now() - 86_400_000);
+  const sent: string[] = [];
+  const skipped: { number: string | null; reason: string }[] = [];
+  for (const doc of docs) {
+    const buyer = (doc.buyer ?? {}) as { name?: string; email?: string };
+    if (!buyer.email) {
+      skipped.push({ number: doc.number, reason: 'No email for this customer' });
+      continue;
+    }
+    const today = await db().notificationLog.count({ where: { tenantId, target: buyer.email, sentAt: { gt: since }, template: { startsWith: 'customer.' } } });
+    if (today >= settings.dailyCap) {
+      skipped.push({ number: doc.number, reason: `Already got ${settings.dailyCap} message${settings.dailyCap === 1 ? '' : 's'} today` });
+      continue;
+    }
+    const vars = {
+      customer: buyer.name ?? 'there', business: t.name, number: doc.number ?? '', amount: rupees(doc.totalPaise - doc.paidPaise),
+      due_date: fmtDate(doc.dueDate), link: doc.shareToken ? `${env.APP_URL}/d/${doc.shareToken}` : '',
+    };
+    await sendMessage({ channel: 'email', to: buyer.email, template: 'customer.invoice_overdue', subject: renderTemplate(tpl.subject, vars), text: renderTemplate(tpl.body, vars) });
+    await db().notificationLog.create({ data: { tenantId, template: 'customer.invoice_overdue', channel: 'email', target: buyer.email } });
+    sent.push(doc.number ?? doc.id);
+  }
+  const missing = ids.length - docs.length;
+  if (missing) skipped.push({ number: null, reason: `${missing} invoice${missing === 1 ? ' is' : 's are'} already paid or cancelled` });
+  await audit({ action: 'billing.invoice.remind', entity: 'invoice', after: { sent, skipped: skipped.length } });
+  return { sent: sent.length, skipped };
+}
+
 consumer('messages.invoice_issued', 'invoice.issued', async (evt) => {
   await deliver(evt.tenantId!, 'invoice_issued', String(evt.payload.documentId));
 });
